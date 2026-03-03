@@ -4,6 +4,7 @@
     flex-direction: column;
     background: var(--bg-deep);
     overflow: hidden;
+    min-width: 0;
   }
 
   .video-viewport {

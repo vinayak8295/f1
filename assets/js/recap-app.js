@@ -195,6 +195,8 @@ function initRecap() {
   // Show recap screen
   document.getElementById('idleScreen').style.display = 'none';
   document.getElementById('raceRecap').classList.add('active');
+  const layout = document.querySelector('.app-layout');
+  if (layout) layout.classList.add('no-input');
 
   // Sidebar
   renderLeaderboard();
@@ -456,7 +458,7 @@ const FALLBACK_WAYPOINTS = [
 
 const SECTOR_SPLITS = [0.32, 0.65];
 let DRS_ZONES = [{ start:0.88, end:0.05 }, { start:0.52, end:0.62 }];
-const TRACK_EDGE_PADDING_CSS = 98; // Keep extra-wide kerbs/tarmac from clipping at viewport edges.
+const TRACK_EDGE_PADDING_CSS = 58; // Smaller padding so the track occupies more viewport area.
 const TRACK_WIDTH_MULT = 1.48;     // Wider visual track for better racing room.
 const CAR_VISUAL_SCALE = 1.2;      // Larger cars while preserving proportions.
 
@@ -1658,22 +1660,11 @@ function startRenderLoop(canvas) {
   const trailCtx = trailCanvas.getContext('2d');
 
   // ── Overlays ─────────────────────────────────────────────────────
-  document.querySelectorAll('#trackAnimation .gap-overlay,.data-badge').forEach(e=>e.remove());
+  document.querySelectorAll('#trackAnimation .gap-overlay').forEach(e=>e.remove());
   const gapOverlay = document.createElement('div');
   gapOverlay.className = 'gap-overlay';
   gapOverlay.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:12;';
   document.getElementById('trackAnimation').appendChild(gapOverlay);
-
-  const badge = document.createElement('div');
-  badge.className = 'data-badge';
-  badge.style.cssText = `position:absolute;bottom:38px;right:8px;z-index:25;
-    font-family:'Orbitron',monospace;font-size:0.38rem;letter-spacing:1.5px;padding:3px 7px;
-    border-radius:2px;pointer-events:none;color:white;
-    background:${usingRealData?'rgba(0,160,70,0.9)':'rgba(140,70,0,0.9)'};`;
-  badge.textContent = usingRealData
-    ? `✓ REAL DATA · FASTF1 · ${replayFrames.length} FRAMES`
-    : '⚠ SYNTHETIC MODE';
-  document.getElementById('trackAnimation').appendChild(badge);
 
   // ── Real-data: pre-index frames by frame number ───────────────────
   // replayFrames[i].t is 0-based seconds. We advance a frameIdx each tick.
