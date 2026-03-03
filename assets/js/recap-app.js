@@ -437,6 +437,7 @@ let replaySpeed    = 1.0;  // auto-calculated: maxT / TARGET_DURATION
 let usingRealData  = false;
 
 const TARGET_DURATION = 540; // play full race in 9 minutes wall-clock time (was 3 min — 3x slower)
+const BASE_PLAYBACK_MULT = 0.5; // Global half-speed playback (0.5x).
 
 // ── Synthetic fallback waypoints (Red Bull Ring) ─────────────────
 const FALLBACK_WAYPOINTS = [
@@ -1283,7 +1284,8 @@ function spawnCars() {
       };
     });
 
-    setStatus(`✅ Real FastF1 data · ${drivers.length} drivers · ${replayFrames.length} frames · ${Math.round(maxT)}s · playing at ${Math.round(replaySpeed)}x speed`);
+    const effectiveReplay = replaySpeed * BASE_PLAYBACK_MULT;
+    setStatus(`✅ Real FastF1 data · ${drivers.length} drivers · ${replayFrames.length} frames · ${Math.round(maxT)}s · playing at ${effectiveReplay.toFixed(1)}x speed`);
 
   } else {
     // ── SYNTHETIC MODE: path-based animation ─────────────────────
@@ -1689,7 +1691,7 @@ function startRenderLoop(canvas) {
     // ── Advance time (only when playing) ─────────────────────────
     if (isPlaying) {
       if (usingRealData) {
-        replayTime += dt * replaySpeed * userSpeedMult;
+        replayTime += dt * replaySpeed * userSpeedMult * BASE_PLAYBACK_MULT;
         const maxT = replayFrames[maxFrameIdx]?.t || 0;
         if (replayTime >= maxT) {
           replayTime = maxT;
@@ -1744,7 +1746,7 @@ function startRenderLoop(canvas) {
         const curv  = curvature[idx] || 0;
         const tspd  = car.baseSpeed * Math.max(0.38, 1 - curv * 2.2);
         car.speed  += (tspd - car.speed) * Math.min(dt*4, 1);
-        car.progress += car.speed * dt;
+        car.progress += car.speed * dt * BASE_PLAYBACK_MULT;
         if (car.progress >= N) { car.progress -= N; car.lapCount++; }
       }
     });
@@ -2027,7 +2029,7 @@ function startPlay() {
       currentLap = Math.min(currentLap + 1, totalLaps);
       updatePlayback(currentLap);
       if (currentLap >= totalLaps) { pausePlay(); setStatus('✓ Recap complete!'); }
-    }, (TARGET_DURATION / totalLaps) * 1000);
+    }, (TARGET_DURATION / totalLaps) * 1000 / Math.max(BASE_PLAYBACK_MULT, 0.01));
   }
 }
 
