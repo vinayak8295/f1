@@ -585,19 +585,19 @@ const DEFAULT_TEAM_SPRITES = {
   'Red Bull Racing': 'assets/sprites/cars/teams/red-bull-racing.png',
   'Red Bull': 'assets/sprites/cars/teams/red-bull-racing.png',
   'Oracle Red Bull Racing': 'assets/sprites/cars/teams/red-bull-racing.png',
-  'Ferrari': 'assets/sprites/cars/teams/ferrari.svg',
-  'Mercedes': 'assets/sprites/cars/teams/mercedes.svg',
-  'McLaren': 'assets/sprites/cars/teams/mclaren.svg',
-  'Aston Martin': 'assets/sprites/cars/teams/aston-martin.svg',
-  'Alpine': 'assets/sprites/cars/teams/alpine.svg',
-  'Williams': 'assets/sprites/cars/teams/williams.svg',
-  'RB': 'assets/sprites/cars/teams/rb.svg',
-  'Racing Bulls': 'assets/sprites/cars/teams/rb.svg',
-  'AlphaTauri': 'assets/sprites/cars/teams/rb.svg',
-  'Kick Sauber': 'assets/sprites/cars/teams/kick-sauber.svg',
-  'Sauber': 'assets/sprites/cars/teams/kick-sauber.svg',
-  'Haas F1 Team': 'assets/sprites/cars/teams/haas-f1-team.svg',
-  'Haas': 'assets/sprites/cars/teams/haas-f1-team.svg',
+  'Ferrari': 'assets/sprites/cars/teams/ferrari.png',
+  'Mercedes': 'assets/sprites/cars/teams/mercedes.png',
+  'McLaren': 'assets/sprites/cars/teams/mclaren.png',
+  'Aston Martin': 'assets/sprites/cars/teams/aston-martin.png',
+  'Alpine': 'assets/sprites/cars/teams/alpine.png',
+  'Williams': 'assets/sprites/cars/teams/williams.png',
+  'RB': 'assets/sprites/cars/teams/rb.png',
+  'Racing Bulls': 'assets/sprites/cars/teams/rb.png',
+  'AlphaTauri': 'assets/sprites/cars/teams/rb.png',
+  'Kick Sauber': 'assets/sprites/cars/teams/kick-sauber.png',
+  'Sauber': 'assets/sprites/cars/teams/kick-sauber.png',
+  'Haas F1 Team': 'assets/sprites/cars/teams/haas-f1-team.png',
+  'Haas': 'assets/sprites/cars/teams/haas-f1-team.png',
 };
 
 function buildAutoCarSpriteConfig() {
@@ -716,12 +716,85 @@ function setRawFrameFromImage(entry) {
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = 'high';
   octx.drawImage(img, 0, 0, outW, outH);
+  dehaloSpriteCanvas(out);
   entry.frame = {
     canvas: out,
     w: outW,
     h: outH,
     aspect: outW / Math.max(outH, 1)
   };
+}
+
+function dehaloSpriteCanvas(canvas) {
+  const w = canvas.width;
+  const h = canvas.height;
+  if (!w || !h) return;
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let imageData;
+  try {
+    imageData = ctx.getImageData(0, 0, w, h);
+  } catch {
+    return;
+  }
+  const d = imageData.data;
+
+  // 1) Edge decontamination: reduce checker/gray matte fringing on semi-transparent edges.
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a <= 10) {
+      d[i + 3] = 0;
+      continue;
+    }
+    if (a >= 245) continue;
+
+    const af = a / 255;
+    const lift = 1 / Math.max(af, 0.45);
+    d[i] = Math.min(255, Math.round(d[i] * lift));
+    d[i + 1] = Math.min(255, Math.round(d[i + 1] * lift));
+    d[i + 2] = Math.min(255, Math.round(d[i + 2] * lift));
+
+    const mx = Math.max(d[i], d[i + 1], d[i + 2]);
+    const mn = Math.min(d[i], d[i + 1], d[i + 2]);
+    const sat = mx - mn;
+    if (sat < 20 && a < 190) {
+      d[i + 3] = Math.round(a * 0.62);
+    }
+  }
+
+  // 2) Alpha bleed: copy nearby opaque RGB into fully transparent pixels
+  // to avoid dark/gray halos during scaled rendering.
+  for (let pass = 0; pass < 2; pass++) {
+    const src = new Uint8ClampedArray(d);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = (y * w + x) * 4;
+        if (src[idx + 3] !== 0) continue;
+
+        let rs = 0, gs = 0, bs = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const j = ((y + dy) * w + (x + dx)) * 4;
+            if (src[j + 3] > 0) {
+              rs += src[j];
+              gs += src[j + 1];
+              bs += src[j + 2];
+              n++;
+            }
+          }
+        }
+        if (n > 0) {
+          d[idx] = Math.round(rs / n);
+          d[idx + 1] = Math.round(gs / n);
+          d[idx + 2] = Math.round(bs / n);
+          d[idx + 3] = 0;
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
 }
 
 function estimateSpriteBorderColor(data, w, h, thickness = 3) {
@@ -852,6 +925,7 @@ function processCarSpriteEntry(entry) {
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = 'high';
   octx.drawImage(work, minX, minY, trimW, trimH, 0, 0, outW, outH);
+  dehaloSpriteCanvas(out);
 
   entry.frame = {
     canvas: out,
@@ -1288,9 +1362,9 @@ function drawCarSprite(ctx, cx, cy, angle, car, isLeader) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   // Subtle blend shadow without visible oval artifacts.
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 3;
-  ctx.shadowOffsetY = 1;
+  ctx.shadowColor = 'rgba(0,0,0,0.22)';
+  ctx.shadowBlur = 1.4;
+  ctx.shadowOffsetY = 0.6;
   ctx.drawImage(frame.canvas, -spriteW * 0.5, -spriteH / 2, spriteW, spriteH);
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
