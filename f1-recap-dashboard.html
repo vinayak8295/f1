@@ -1,0 +1,214 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Interactive Formula 1 race recap dashboard with telemetry-style playback, standings, pit history, and strategy views.">
+<title>F1 Race Recap Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/recap.css">
+</head>
+<body>
+<!-- HEADER -->
+<header>
+  <div class="f1-logo">F1</div>
+  <div class="race-title" id="headerRaceTitle">RACE RECAP STUDIO</div>
+  <nav class="header-links" aria-label="Project pages">
+    <a href="index.html">Home</a>
+    <a href="data-guide.html">Data Guide</a>
+    <a href="about.html">About</a>
+  </nav>
+  <div class="lap-badge" id="headerLapBadge">LAP — / —</div>
+</header>
+
+<!-- MAIN LAYOUT -->
+<div class="app-layout">
+
+  <!-- LEFT: JSON INPUT PANEL -->
+  <div class="left-panel">
+    <div class="panel-header">
+      <span class="panel-title">Race Data Input</span>
+      <div class="dot-indicator"></div>
+    </div>
+    <textarea class="json-editor" id="jsonInput" placeholder='OPTION 1 — REAL DATA (FastF1):
+Run the Python extractor:
+  pip install fastf1 numpy pandas
+  python f1_extractor.py --year 2024 --round 11
+Then click "📂 IMPORT FILE" to load the JSON.
+
+OPTION 2 — PASTE JSON:
+Paste any race JSON here and click GENERATE.
+Click "SAMPLE" to load example data.
+
+Real data includes:
+  ✓ Actual GPS car positions
+  ✓ Real circuit geometry
+  ✓ Tyre compounds + strategy
+  ✓ Pit stop history
+  ✓ Race control events
+  ✓ Weather data'></textarea>
+    <div class="left-footer">
+      <button class="btn btn-secondary" onclick="importJSONFile()">📂 FILE</button>
+      <button class="btn btn-secondary" onclick="loadSampleData()">SAMPLE</button>
+      <button class="btn btn-primary" id="generateBtn" onclick="generateRecap()">GENERATE ▶</button>
+    </div>
+    <div class="status-bar">
+      <div class="status-dot"></div>
+      <span id="statusText">Ready — paste JSON & generate</span>
+    </div>
+  </div>
+
+  <!-- CENTER: VIDEO PLAYER -->
+  <div class="center-panel">
+    <div class="video-viewport">
+      <div class="video-bg"></div>
+      <div class="track-viz"></div>
+
+      <!-- Loading overlay -->
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="loader-ring"></div>
+        <div class="loading-text">GENERATING RECAP</div>
+      </div>
+
+      <!-- Idle screen -->
+      <div class="race-scene" id="idleScreen">
+        <div class="idle-screen">
+          <div class="idle-icon">🏎</div>
+          <h2>RACE RECAP</h2>
+          <p>LOAD JSON → GENERATE → WATCH</p>
+        </div>
+      </div>
+
+      <!-- Race recap playback -->
+      <div class="race-recap" id="raceRecap">
+
+        <!-- Cinematic vignette -->
+        <div class="video-vignette"></div>
+
+        <!-- Track canvas (fills everything) -->
+        <div class="track-animation" id="trackAnimation">
+          <canvas id="trackCanvas"></canvas>
+        </div>
+
+        <!-- TOP LEFT: Race pill -->
+        <div class="tv-race-pill">
+          <div class="tv-race-pill-flag" id="tvCircuitLabel">RED BULL RING</div>
+          <div class="tv-race-pill-name">
+            <div class="gp-main" id="broadcastGPName">AUSTRIAN GRAND PRIX 2024</div>
+            <div class="gp-sub" id="tvWeather">☀ SUNNY · 28°C · DRY</div>
+          </div>
+        </div>
+
+        <!-- TOP RIGHT: Lap counter -->
+        <div class="tv-lap-counter">
+          <div class="tv-lap-label">LAP</div>
+          <div class="tv-lap-nums"><span id="tvLapCurrent">0</span><span class="of-total"> / <span id="tvLapTotal">0</span></span></div>
+          <div class="tv-race-clock" id="tvRaceClock">+0:00:00</div>
+        </div>
+
+        <!-- RIGHT: Timing tower -->
+        <div class="tv-timing-tower">
+          <div class="tt-header">
+            <span>#</span><span></span><span style="padding-left:4px">DRIVER</span>
+            <span style="text-align:right">INTERVAL</span>
+            <span style="text-align:right">TYR</span>
+          </div>
+          <div id="tvTimingRows"></div>
+        </div>
+
+        <!-- CENTER: Fastest lap flash -->
+        <div class="tv-fastest-flash" id="tvFastestFlash">
+          <div class="ffl-label">FASTEST LAP 🟣</div>
+          <div class="ffl-time" id="fflTime">1:07.275</div>
+          <div class="ffl-driver" id="fflDriver">VER · LAP 58</div>
+        </div>
+
+        <!-- BOTTOM: Event strip -->
+        <div class="tv-bottom-bar">
+          <div class="tv-event-strip" id="tvEventStrip">
+            <span class="tv-event-type start">RACE START</span>
+            <span class="tv-event-msg">Lights out and away we go!</span>
+            <span class="tv-event-lap">LAP 1</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Timeline / Controls -->
+    <div class="timeline-bar">
+      <div class="tl-controls">
+        <button class="tl-btn" id="playBtn" onclick="togglePlay()">▶</button>
+        <button class="tl-btn" onclick="seekRelative(-5)">⏮</button>
+        <button class="tl-btn" onclick="seekRelative(5)">⏭</button>
+        <button class="tl-btn" id="speedBtn" onclick="cycleSpeed()" style="font-size:0.6rem;letter-spacing:1px;min-width:36px">1×</button>
+        <div class="progress-track" id="progressTrack" onclick="seekClick(event)">
+          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+          <div id="timelineMarkers"></div>
+        </div>
+        <span class="tl-time" id="tlTime">LAP 0 / 0</span>
+      </div>
+      <div class="tl-laps" id="lapChips"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: DATA SIDEBAR -->
+  <div class="right-panel">
+    <div class="sidebar-tabs">
+      <button class="stab active" onclick="switchTab('leaderboard', this)">ORDER</button>
+      <button class="stab" onclick="switchTab('pitstops', this)">PITS</button>
+      <button class="stab" onclick="switchTab('strategy', this)">TYRES</button>
+      <button class="stab" onclick="switchTab('stats', this)">STATS</button>
+    </div>
+
+    <div class="sidebar-content">
+
+      <!-- Leaderboard Tab -->
+      <div class="tab-pane active" id="tab-leaderboard">
+        <div class="lb-table">
+          <div class="lb-thead">
+            <span>#</span>
+            <span></span>
+            <span>DRIVER</span>
+            <span style="text-align:right">INTERVAL</span>
+            <span style="text-align:right">BEST LAP</span>
+          </div>
+          <div id="leaderboardRows"></div>
+        </div>
+      </div>
+
+      <!-- Pit Stops Tab -->
+      <div class="tab-pane" id="tab-pitstops">
+        <div class="section-header">
+          <span>PIT STOP HISTORY</span>
+          <span id="totalPits" style="color:var(--text-dim)">0 STOPS</span>
+        </div>
+        <div id="pitstopRows"></div>
+      </div>
+
+      <!-- Strategy Tab -->
+      <div class="tab-pane" id="tab-strategy">
+        <div class="section-header">TYRE STRATEGY</div>
+        <div id="strategyRows"></div>
+        <div style="padding: 10px 12px; display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border);">
+          <span><span class="tire-badge tire-S">S</span> <span style="font-size:0.65rem;color:var(--text-dim)">Soft</span></span>
+          <span><span class="tire-badge tire-M">M</span> <span style="font-size:0.65rem;color:var(--text-dim)">Medium</span></span>
+          <span><span class="tire-badge tire-H">H</span> <span style="font-size:0.65rem;color:var(--text-dim)">Hard</span></span>
+          <span><span class="tire-badge tire-I">I</span> <span style="font-size:0.65rem;color:var(--text-dim)">Inter</span></span>
+        </div>
+      </div>
+
+      <!-- Stats Tab -->
+      <div class="tab-pane" id="tab-stats">
+        <div id="statsContent"></div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+<script defer src="assets/js/recap-app.js"></script>
+</body>
+</html>

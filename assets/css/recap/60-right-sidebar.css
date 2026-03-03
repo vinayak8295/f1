@@ -1,0 +1,296 @@
+﻿  /* ─── RIGHT: DATA SIDEBAR ─── */
+  .right-panel {
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stab {
+    flex: 1;
+    padding: 10px 8px;
+    text-align: center;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  .stab:hover { color: var(--text-dim); }
+  .stab.active { color: var(--f1-red); border-bottom-color: var(--f1-red); }
+
+  .sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-bright) transparent;
+  }
+
+  .sidebar-content::-webkit-scrollbar { width: 4px; }
+  .sidebar-content::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-content::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* Leaderboard table */
+  .lb-table { width: 100%; }
+
+  .lb-thead {
+    display: grid;
+    grid-template-columns: 24px 16px 1fr 55px 55px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    font-family: 'Orbitron', monospace;
+    font-size: 0.5rem;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    gap: 6px;
+  }
+
+  .lb-row {
+    display: grid;
+    grid-template-columns: 24px 16px 1fr 55px 55px;
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    gap: 6px;
+    align-items: center;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+
+  .lb-row:hover { background: var(--bg-highlight); }
+
+  .lb-pos-num {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-dim);
+  }
+
+  .lb-pos-num.p1 { color: var(--accent-yellow); }
+  .lb-pos-num.p2 { color: #c0c0c0; }
+  .lb-pos-num.p3 { color: #cd7f32; }
+
+  .lb-color {
+    width: 3px;
+    height: 20px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .lb-driver-info { overflow: hidden; }
+
+  .lb-driver-code {
+    font-weight: 700;
+    font-size: 0.78rem;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+
+  .lb-team {
+    font-size: 0.58rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .lb-laptime {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-align: right;
+  }
+
+  .lb-gap-col {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-align: right;
+  }
+
+  .lb-gap-col.gap-0 { color: var(--accent-green); font-weight: 700; }
+
+  /* Tire badge */
+  .tire-badge {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    line-height: 14px;
+    text-align: center;
+    font-size: 0.5rem;
+    font-weight: 700;
+    margin-right: 3px;
+  }
+
+  .tire-S { background: var(--f1-red); color: white; }
+  .tire-M { background: var(--medium); color: #000; }
+  .tire-H { background: var(--soft); color: #000; }
+  .tire-I { background: var(--inter); color: white; }
+  .tire-W { background: #0066cc; color: white; }
+
+  /* Section headers in sidebar */
+  .section-header {
+    padding: 10px 12px 6px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 3px;
+    color: var(--text-muted);
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* Pit stop history */
+  .pit-row {
+    display: grid;
+    grid-template-columns: 40px 1fr 40px 40px;
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 0.72rem;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .pit-time {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+
+  .pit-duration {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent-yellow);
+    text-align: right;
+  }
+
+  .pit-lap {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-align: right;
+  }
+
+  /* Tire strategy bars */
+  .strategy-row {
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .str-driver-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
+  .str-bars {
+    display: flex;
+    height: 10px;
+    border-radius: 2px;
+    overflow: hidden;
+    gap: 1px;
+  }
+
+  .str-seg {
+    height: 100%;
+    border-radius: 1px;
+    min-width: 4px;
+  }
+
+  /* Stats tab */
+  .stat-card {
+    margin: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 10px 14px;
+  }
+
+  .stat-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .stat-sub {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .fastest-lap-highlight {
+    border-color: #a855f7;
+    background: rgba(168,85,247,0.05);
+  }
+
+  .fastest-lap-highlight .stat-value { color: #a855f7; }
+
+  /* Speed chart bars */
+  .speed-row {
+    padding: 5px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.68rem;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .speed-driver { width: 36px; font-weight: 700; letter-spacing: 1px; }
+
+  .speed-bar-track {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .speed-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #1a1a3a, var(--accent-blue));
+    transition: width 1s ease;
+  }
+
+  .speed-val {
+    width: 45px;
+    text-align: right;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+  }
+

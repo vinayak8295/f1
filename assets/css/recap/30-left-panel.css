@@ -1,0 +1,98 @@
+﻿  /* ─── LEFT: JSON INPUT ─── */
+  .left-panel {
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-card);
+  }
+
+  .panel-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .dot-indicator {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .json-editor {
+    flex: 1;
+    background: #080810;
+    border: none;
+    color: #7ec8e3;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 16px;
+    resize: none;
+    outline: none;
+    line-height: 1.6;
+    overflow-y: auto;
+  }
+
+  .json-editor::placeholder { color: var(--text-muted); }
+
+  .left-footer {
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 2px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--f1-red);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: #ff1444;
+    box-shadow: 0 0 20px rgba(232,0,45,0.5);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: var(--bg-highlight);
+    color: var(--text-dim);
+    border: 1px solid var(--border-bright);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+  }
+

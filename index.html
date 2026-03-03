@@ -1,0 +1,70 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Production-ready F1 recap website with interactive race playback, data ingestion guide, and architecture overview.">
+<title>F1 Recap Studio | Home</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script defer src="assets/js/components.js"></script>
+<script defer src="assets/js/site.js"></script>
+</head>
+<body class="site-page">
+<site-header active="home"></site-header>
+
+<main class="site-main">
+  <section class="hero" data-reveal>
+    <h1>Formula 1 Recap Studio</h1>
+    <p>Convert structured race data into an explorable broadcast-style recap. The platform includes live order playback, tyre strategy, pit history, and race event overlays in one telemetry-focused UI.</p>
+  </section>
+
+  <section class="kpis" data-reveal>
+    <article class="kpi-card"><div class="label">Mode</div><div class="value">Single Page App</div></article>
+    <article class="kpi-card"><div class="label">Playback</div><div class="value">Lap + Time Sync</div></article>
+    <article class="kpi-card"><div class="label">Input</div><div class="value">JSON / FastF1 Export</div></article>
+    <article class="kpi-card"><div class="label">Output</div><div class="value">TV-style Recap</div></article>
+  </section>
+
+  <section class="grid-2">
+    <article class="panel" data-reveal>
+      <h2>Core Features</h2>
+      <ul class="feature-list">
+        <li class="feature-item"><strong>Live Timing Tower</strong><span>Position, interval, and tyre compound updates during playback.</span></li>
+        <li class="feature-item"><strong>Track Visualization</strong><span>Animated car positions mapped from extracted GPS traces or synthetic pathing.</span></li>
+        <li class="feature-item"><strong>Strategy Panels</strong><span>Tyre stints, pit stop history, and race statistics side-by-side.</span></li>
+        <li class="feature-item"><strong>Control Surface</strong><span>Play, seek, skip, and speed controls aligned with race lap progression.</span></li>
+      </ul>
+    </article>
+
+    <article class="panel" data-reveal>
+      <h2>Start Here</h2>
+      <ul class="link-list">
+        <li>
+          <a href="f1-recap-dashboard.html">
+            <div class="link-title">Open Recap Studio</div>
+            <div class="link-sub">Launch the dashboard and generate a recap from sample or real data.</div>
+          </a>
+        </li>
+        <li>
+          <a href="data-guide.html">
+            <div class="link-title">Read Data Guide</div>
+            <div class="link-sub">Use the expected JSON format and ingestion workflow.</div>
+          </a>
+        </li>
+        <li>
+          <a href="about.html">
+            <div class="link-title">View Architecture</div>
+            <div class="link-sub">Understand the production-ready split across HTML, CSS, JS, and components.</div>
+          </a>
+        </li>
+      </ul>
+    </article>
+  </section>
+</main>
+
+<site-footer></site-footer>
+</body>
+</html>

@@ -1,0 +1,85 @@
+﻿  /* Responsive adjustments */
+  @media (max-width: 1100px) {
+    .app-layout { grid-template-columns: 280px 1fr 260px; }
+    .header-links { display: none; }
+  }
+
+  /* Animations */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .fade-in { animation: fadeInUp 0.5s ease; }
+
+  /* Sector colors */
+  .s1 { color: #ff4444; }
+  .s2 { color: #44ff44; }
+  .s3 { color: var(--accent-yellow); }
+
+  .purple-sector { color: #a855f7 !important; font-weight: 700; }
+
+  /* Position changes */
+  .pos-up::before { content: '▲ '; color: var(--accent-green); font-size: 0.6rem; }
+  .pos-down::before { content: '▼ '; color: var(--f1-red); font-size: 0.6rem; }
+
+  /* Generate button glow effect */
+  .generating {
+    animation: borderGlow 1s infinite;
+  }
+
+  @keyframes borderGlow {
+    0%, 100% { box-shadow: 0 0 10px rgba(232,0,45,0.3); }
+    50% { box-shadow: 0 0 30px rgba(232,0,45,0.8); }
+  }
+
+  .status-bar {
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    display: flex;
+    justify-between: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent-green);
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(5,5,7,0.9);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    flex-direction: column;
+    gap: 20px;
+    backdrop-filter: blur(4px);
+  }
+
+  .loading-overlay.active { display: flex; }
+
+  .loader-ring {
+    width: 60px; height: 60px;
+    border: 3px solid var(--border-bright);
+    border-top-color: var(--f1-red);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-text {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 4px;
+    color: var(--text-dim);
+  }

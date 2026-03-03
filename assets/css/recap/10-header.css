@@ -1,0 +1,78 @@
+﻿  /* ─── HEADER ─── */
+  header {
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-bright);
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .f1-logo {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 1.1rem;
+    color: var(--f1-red);
+    letter-spacing: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .f1-logo::before {
+    content: '';
+    display: block;
+    width: 32px; height: 20px;
+    background: var(--f1-red);
+    clip-path: polygon(0 0, 80% 0, 100% 50%, 80% 100%, 0 100%, 20% 50%);
+  }
+
+  .race-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    flex: 1;
+  }
+
+  .header-links {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-links a {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.56rem;
+    letter-spacing: 1.1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    background: var(--bg-highlight);
+    border-radius: 2px;
+    padding: 5px 8px;
+    text-decoration: none;
+    transition: 0.2s ease;
+  }
+
+  .header-links a:hover {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+  }
+
+  .lap-badge {
+    background: var(--f1-red);
+    font-family: 'Orbitron', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 2px;
+    letter-spacing: 1px;
+  }
+

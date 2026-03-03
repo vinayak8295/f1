@@ -1,0 +1,82 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="F1 Recap Studio data contract and JSON shape reference.">
+<title>F1 Recap Studio | Data Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script defer src="assets/js/components.js"></script>
+<script defer src="assets/js/site.js"></script>
+<script defer src="assets/js/data-guide.js"></script>
+</head>
+<body class="site-page">
+<site-header active="data"></site-header>
+
+<main class="site-main">
+  <section class="panel" data-reveal>
+    <h1 class="page-title">Data Guide</h1>
+    <p class="page-subtitle">Use this schema as the baseline payload for the recap engine. It supports standings, pit history, events, and optional replay frames from FastF1 extraction.</p>
+  </section>
+
+  <section class="doc-grid">
+    <article class="doc-card" data-reveal>
+      <h3>Required Blocks</h3>
+      <p>`race`, `drivers`, and `events` should always be present. `replay` and `pitHistory` can be omitted for quick synthetic playback.</p>
+    </article>
+    <article class="doc-card" data-reveal>
+      <h3>Driver Fields</h3>
+      <p>Each driver entry should include `code`, `team`, `pos`, `gap`, and `tyre`. Best lap and tyre age are optional but recommended.</p>
+    </article>
+    <article class="doc-card" data-reveal>
+      <h3>Replay Frames</h3>
+      <p>For real animation, provide timestamped `cars` coordinates: `{ t: number, cars: { VER: { x, y } } }`.</p>
+    </article>
+    <article class="doc-card" data-reveal>
+      <h3>Events</h3>
+      <p>Use lap-based events with a `type` and `message` for race control and broadcast ticker overlays.</p>
+    </article>
+  </section>
+
+  <section class="panel" data-reveal>
+    <div class="copy-row">
+      <button type="button" class="btn-copy" id="copySchemaBtn">Copy Sample JSON</button>
+    </div>
+<pre class="code-block"><code id="jsonSchemaExample">{
+  "race": {
+    "name": "Austrian Grand Prix",
+    "year": 2024,
+    "circuit": "Red Bull Ring",
+    "laps": 71,
+    "weather": "Sunny, 28C"
+  },
+  "drivers": [
+    {
+      "pos": 1,
+      "code": "VER",
+      "team": "Red Bull",
+      "gap": "LEADER",
+      "bestLap": "1:07.275",
+      "tyre": "H"
+    }
+  ],
+  "pitHistory": [
+    { "driver": "NOR", "lap": 23, "compound": "H", "duration": "2.4s" }
+  ],
+  "events": [
+    { "lap": 1, "type": "start", "message": "Lights out and away we go!" }
+  ],
+  "replay": {
+    "track": [{ "x": 0.0, "y": 0.2 }],
+    "frames": [{ "t": 0, "cars": { "VER": { "x": 0.1, "y": 0.2 } } }]
+  }
+}</code></pre>
+  </section>
+</main>
+
+<site-footer></site-footer>
+</body>
+</html>

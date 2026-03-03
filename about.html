@@ -1,0 +1,57 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Architecture and implementation notes for F1 Recap Studio.">
+<title>F1 Recap Studio | About</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Orbitron:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/site.css">
+<script defer src="assets/js/components.js"></script>
+<script defer src="assets/js/site.js"></script>
+</head>
+<body class="site-page">
+<site-header active="about"></site-header>
+
+<main class="site-main">
+  <section class="panel" data-reveal>
+    <h1 class="page-title">About This Build</h1>
+    <p class="page-subtitle">This implementation refactors a monolithic dashboard into production-ready structure: separate assets, reusable components, and dedicated pages.</p>
+  </section>
+
+  <section class="grid-2">
+    <article class="panel" data-reveal>
+      <h2>Delivery Timeline</h2>
+      <div class="timeline">
+        <div class="timeline-item"><strong>Phase 1: Asset Separation</strong><span>Inline CSS and JS moved into versionable files under `assets/`.</span></div>
+        <div class="timeline-item"><strong>Phase 2: Multi-page Shell</strong><span>Added Home, Data Guide, and About pages with consistent navigation.</span></div>
+        <div class="timeline-item"><strong>Phase 3: Reusable Components</strong><span>Created `site-header` and `site-footer` web components for shared layout.</span></div>
+      </div>
+    </article>
+
+    <article class="panel" data-reveal>
+      <h2>Technical Notes</h2>
+      <ul class="feature-list">
+        <li class="feature-item"><strong>No Framework Required</strong><span>Pure HTML/CSS/JS for easy deployment on any static host.</span></li>
+        <li class="feature-item"><strong>Responsive Layout</strong><span>Desktop-first interface with mobile navigation and adaptive cards.</span></li>
+        <li class="feature-item"><strong>Extensible Components</strong><span>Navigation and footer are centrally maintained in one script.</span></li>
+        <li class="feature-item"><strong>Backward-Compatible Dashboard</strong><span>The original recap experience remains intact while externalized into assets.</span></li>
+      </ul>
+    </article>
+  </section>
+
+  <section class="panel" data-reveal>
+    <h2>Navigate</h2>
+    <ul class="link-list">
+      <li><a href="f1-recap-dashboard.html"><div class="link-title">Recap Studio</div><div class="link-sub">Open the interactive dashboard.</div></a></li>
+      <li><a href="data-guide.html"><div class="link-title">Data Guide</div><div class="link-sub">Validate payload structure before import.</div></a></li>
+      <li><a href="index.html"><div class="link-title">Home</div><div class="link-sub">Return to the project overview.</div></a></li>
+    </ul>
+  </section>
+</main>
+
+<site-footer></site-footer>
+</body>
+</html>

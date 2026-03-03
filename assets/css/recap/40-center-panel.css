@@ -1,0 +1,421 @@
+﻿  /* ─── CENTER: VIDEO PLAYER ─── */
+  .center-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-deep);
+    overflow: hidden;
+  }
+
+  .video-viewport {
+    flex: 1;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .video-bg {
+    position: absolute;
+    inset: 0;
+    background: #060810;
+  }
+
+  /* Track visualization */
+  .track-viz {
+    display: none;
+  }
+
+  .race-scene {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .idle-screen {
+    text-align: center;
+  }
+
+  .idle-screen h2 {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.4rem;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .idle-screen p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+  }
+
+  .idle-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    filter: grayscale(1) opacity(0.3);
+  }
+
+  /* Race recap animation area */
+  .race-recap {
+    display: none;
+    position: absolute;
+    inset: 0;
+    flex-direction: column;
+  }
+
+  .race-recap.active { display: flex; }
+
+  /* ── CINEMATIC VIGNETTE ── */
+  .video-vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: radial-gradient(ellipse at 50% 50%,
+      transparent 40%,
+      rgba(0,0,0,0.25) 70%,
+      rgba(0,0,0,0.65) 100%);
+  }
+
+  /* ── F1 TV TOP-LEFT: Race info pill ── */
+  .tv-race-pill {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .tv-race-pill-flag {
+    background: var(--f1-red);
+    padding: 3px 10px 3px 8px;
+    clip-path: polygon(0 0, 100% 0, 96% 100%, 0 100%);
+    font-family: 'Orbitron', monospace;
+    font-size: 0.5rem;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: white;
+    text-transform: uppercase;
+  }
+
+  .tv-race-pill-name {
+    background: rgba(10,10,18,0.92);
+    border-left: 3px solid var(--f1-red);
+    padding: 5px 12px;
+    backdrop-filter: blur(12px);
+  }
+
+  .tv-race-pill-name .gp-main {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: white;
+  }
+
+  .tv-race-pill-name .gp-sub {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.45);
+    letter-spacing: 1px;
+    margin-top: 1px;
+  }
+
+  /* ── TOP RIGHT: Lap counter ── */
+  .tv-lap-counter {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 20;
+    background: rgba(10,10,18,0.92);
+    backdrop-filter: blur(12px);
+    border-right: 3px solid var(--f1-red);
+    padding: 6px 12px;
+    text-align: right;
+  }
+
+  .tv-lap-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.45rem;
+    letter-spacing: 4px;
+    color: var(--f1-red);
+    margin-bottom: 1px;
+  }
+
+  .tv-lap-nums {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.3rem;
+    font-weight: 900;
+    color: white;
+    letter-spacing: 2px;
+    line-height: 1;
+  }
+
+  .tv-lap-nums .of-total {
+    font-size: 0.6rem;
+    color: rgba(255,255,255,0.4);
+    margin-left: 2px;
+  }
+
+  .tv-race-clock {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(255,255,255,0.35);
+    text-align: right;
+    margin-top: 2px;
+  }
+
+  /* ── TIMING TOWER (F1 TV-style right side) ── */
+  .tv-timing-tower {
+    position: absolute;
+    top: 80px;
+    right: 16px;
+    z-index: 20;
+    width: 210px;
+  }
+
+  .tt-header {
+    background: var(--f1-red);
+    display: grid;
+    grid-template-columns: 22px 6px 1fr 58px 30px;
+    gap: 0;
+    padding: 3px 6px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.42rem;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.8);
+    align-items: center;
+  }
+
+  .tt-row {
+    display: grid;
+    grid-template-columns: 22px 6px 1fr 58px 30px;
+    gap: 0;
+    padding: 2.5px 6px;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.3s;
+    backdrop-filter: blur(8px);
+  }
+
+  .tt-row:nth-child(odd)  { background: rgba(10,10,20,0.88); }
+  .tt-row:nth-child(even) { background: rgba(14,14,26,0.88); }
+  .tt-row.tt-leader       { background: rgba(232,0,45,0.12); }
+  .tt-row.tt-p2           { background: rgba(180,180,180,0.06); }
+  .tt-row.tt-p3           { background: rgba(180,120,0,0.08); }
+
+  .tt-pos {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: rgba(255,255,255,0.45);
+  }
+  .tt-pos.ldr { color: var(--accent-yellow); }
+  .tt-pos.p2  { color: #c0c0c0; }
+  .tt-pos.p3  { color: #cd7f32; }
+
+  .tt-teambar {
+    width: 4px;
+    height: 16px;
+    border-radius: 1px;
+  }
+
+  .tt-driver {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: white;
+    padding-left: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .tt-gap {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(255,255,255,0.5);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .tt-gap.leader-gap { color: var(--accent-green); font-size: 0.55rem; }
+  .tt-gap.pit-gap    { color: var(--accent-yellow); }
+
+  .tt-tyre {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .tt-tyre-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.4);
+    font-size: 0;
+  }
+
+  /* ── BOTTOM BAR: F1 TV banner ── */
+  .tv-bottom-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Event ticker strip */
+  .tv-event-strip {
+    background: rgba(8,8,16,0.95);
+    border-top: 2px solid var(--f1-red);
+    padding: 5px 16px;
+    min-height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+  }
+
+  .tv-event-type {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.52rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 2px 7px;
+    border-radius: 1px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .tv-event-type.overtake  { background: var(--f1-red);    color: white; }
+  .tv-event-type.pitstop   { background: #c8a000;          color: #000; }
+  .tv-event-type.fastest   { background: #8b00cc;          color: white; }
+  .tv-event-type.incident  { background: #cc5500;          color: white; }
+  .tv-event-type.dnf       { background: #333;             color: #aaa; }
+  .tv-event-type.start     { background: var(--accent-green); color: #000; }
+  .tv-event-type.finish    { background: white;            color: #000; }
+
+  .tv-event-msg {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    letter-spacing: 0.5px;
+    flex: 1;
+  }
+
+  .tv-event-lap {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.58rem;
+    color: rgba(255,255,255,0.3);
+    flex-shrink: 0;
+  }
+
+  /* ── Cinematic sliding event animation ── */
+  @keyframes tvEventSlide {
+    0%   { transform: translateY(100%); opacity: 0; }
+    8%   { transform: translateY(0);    opacity: 1; }
+    80%  { transform: translateY(0);    opacity: 1; }
+    100% { transform: translateY(-100%);opacity: 0; }
+  }
+
+  .tv-event-anim {
+    animation: tvEventSlide 5s ease forwards;
+  }
+
+  /* ── FASTEST LAP FLASH ── */
+  .tv-fastest-flash {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 30;
+    background: rgba(140,0,200,0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(200,100,255,0.5);
+    padding: 10px 28px;
+    text-align: center;
+    display: none;
+    box-shadow: 0 0 40px rgba(140,0,200,0.6);
+  }
+
+  .tv-fastest-flash.show {
+    display: block;
+    animation: fastestAnim 3s ease forwards;
+  }
+
+  @keyframes fastestAnim {
+    0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.85); }
+    15%  { opacity: 1; transform: translate(-50%,-50%) scale(1.02); }
+    75%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%,-50%) scale(0.95); }
+  }
+
+  .ffl-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.5rem;
+    letter-spacing: 4px;
+    color: rgba(255,180,255,0.7);
+    margin-bottom: 2px;
+  }
+
+  .ffl-time {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: white;
+    letter-spacing: 3px;
+  }
+
+  .ffl-driver {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.75rem;
+    color: rgba(255,200,255,0.7);
+    letter-spacing: 2px;
+    margin-top: 2px;
+  }
+
+  /* ── GAP ARROWS between cars on track ── */
+  .gap-label {
+    position: absolute;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem;
+    color: rgba(255,255,255,0.6);
+    background: rgba(0,0,0,0.6);
+    padding: 1px 4px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 15;
+    white-space: nowrap;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Track canvas */
+  .track-animation {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #trackCanvas {
+    width: 100%;
+    height: 100%;
+  }
+
