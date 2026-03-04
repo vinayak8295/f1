@@ -228,26 +228,107 @@ function initRecap() {
 }
 
 function renderLeaderboard() {
-  const container = document.getElementById('leaderboardRows');
   const drivers = raceData.drivers || [];
+  renderLeaderboardRows(drivers, { animate: true, uptoLap: 0 });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeDriverCode(code) {
+  return String(code ?? '').trim().toUpperCase();
+}
+
+function sanitizeDriverSlug(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9-]/g, '');
+}
+
+function getDriverPhotoUrl(driver) {
+  const explicitPhoto = driver?.photo || driver?.photoUrl || driver?.headshot || driver?.headshot_url || driver?.image || driver?.img;
+  if (typeof explicitPhoto === 'string' && explicitPhoto.trim()) {
+    return explicitPhoto.trim();
+  }
+
+  const name = String(driver?.name || '').trim();
+  if (!name) return '';
+  const surname = sanitizeDriverSlug(name.split(/\s+/).pop());
+  if (!surname) return '';
+  const season = Number(raceData?.race?.year) || 2024;
+  return `https://media.formula1.com/content/dam/fom-website/drivers/${season}Drivers/${surname}.jpg`;
+}
+
+function getPitStopCountsByDriver(uptoLap = Infinity) {
+  const pitHistory = raceData?.pitHistory || [];
+  const maxLap = Number.isFinite(Number(uptoLap)) ? Number(uptoLap) : Infinity;
+  const counts = {};
+
+  pitHistory.forEach(stop => {
+    const code = normalizeDriverCode(stop?.driver);
+    if (!code) return;
+
+    const stopLap = Number(stop?.lap);
+    if (Number.isFinite(stopLap) && stopLap > maxLap) return;
+
+    counts[code] = (counts[code] || 0) + 1;
+  });
+
+  return counts;
+}
+
+function renderLeaderboardRows(drivers, opts = {}) {
+  const container = document.getElementById('leaderboardRows');
+  if (!container) return;
+
+  const animate = !!opts.animate;
+  const maxLap = opts.uptoLap;
+  const pitCounts = getPitStopCountsByDriver(maxLap);
   container.innerHTML = '';
 
   drivers.forEach((d, i) => {
-    const color = TEAM_COLORS[d.team] || '#444';
+    const color = d.color || TEAM_COLORS[d.team] || '#444';
     const posClass = i === 0 ? 'p1' : i === 1 ? 'p2' : i === 2 ? 'p3' : '';
-    const tireHtml = d.tyre && d.tyre !== '—' ? `<span class="tire-badge tire-${d.tyre}">${d.tyre}</span>` : '';
+    const tyre = d.tyre && d.tyre !== '—' ? d.tyre : '';
+    const tyreHtml = tyre
+      ? `<span class="tire-badge tire-${escapeHtml(tyre)}" title="Current tyre: ${escapeHtml(tyre)}">${escapeHtml(tyre)}</span>`
+      : '<span class="lb-tyre-unknown" title="Current tyre unavailable">—</span>';
+    const gapTxt = i === 0 ? 'LEADER' : (d.gap || '—');
+    const driverCode = normalizeDriverCode(d.code) || '---';
+    const teamName = d.team || '';
+    const photoUrl = getDriverPhotoUrl(d);
+    const pitStops = pitCounts[driverCode] || 0;
+    const fallbackChar = (driverCode.replace(/[^A-Z0-9]/g, '').charAt(0) || '?');
+
     const row = document.createElement('div');
-    row.className = 'lb-row fade-in';
-    row.style.animationDelay = `${i * 0.04}s`;
+    row.className = animate ? 'lb-row fade-in' : 'lb-row';
+    if (animate) row.style.animationDelay = `${i * 0.04}s`;
     row.innerHTML = `
       <span class="lb-pos-num ${posClass}">${d.pos}</span>
-      <div class="lb-color" style="background:${color}"></div>
-      <div class="lb-driver-info">
-        <div class="lb-driver-code">${tireHtml}${d.code}</div>
-        <div class="lb-team">${d.team}</div>
+      <div class="lb-driver-photo" style="--driver-color:${color}" data-fallback="${fallbackChar}">
+        ${photoUrl
+          ? `<img class="lb-driver-photo-img" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(driverCode)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">`
+          : ''}
       </div>
-      <span class="lb-gap-col ${i===0?'gap-0':''}">${d.gap}</span>
-      <span class="lb-laptime">${d.bestLap || '—'}</span>
+      <div class="lb-driver-info">
+        <div class="lb-driver-line">
+          <div class="lb-color" style="background:${color}"></div>
+          <span class="lb-driver-code">${escapeHtml(driverCode)}</span>
+          ${tyreHtml}
+        </div>
+        <div class="lb-team">${escapeHtml(teamName)}</div>
+      </div>
+      <span class="lb-gap-col ${i===0?'gap-0':''}">${escapeHtml(gapTxt)}</span>
+      <span class="lb-pit-count ${pitStops > 0 ? 'has-pits' : ''}" title="Pit stops">${pitStops}</span>
     `;
     container.appendChild(row);
   });
@@ -2128,7 +2209,7 @@ function updatePlayback(lap) {
   // Update timing tower and ORDER tab with live standings
   const standings = getLiveStandings(Math.max(1, displayLap));
   renderTimingTower(standings);
-  renderLiveLeaderboard(standings);
+  renderLiveLeaderboard(standings, displayLap);
 
   // Sync tyre on canvas car objects
   standings.forEach(d => {
@@ -2140,30 +2221,8 @@ function updatePlayback(lap) {
 }
 
 // ── Live leaderboard — updates ORDER tab during playback ──────────
-function renderLiveLeaderboard(standings) {
-  const container = document.getElementById('leaderboardRows');
-  if (!container) return;
-  container.innerHTML = '';
-  standings.forEach((d, i) => {
-    const color = d.color || TEAM_COLORS[d.team] || '#444';
-    const posClass = i===0?'p1':i===1?'p2':i===2?'p3':'';
-    const tireHtml = d.tyre && d.tyre!=='—'
-      ? `<span class="tire-badge tire-${d.tyre}">${d.tyre}</span>` : '';
-    const gapTxt = i===0 ? 'LEADER' : (d.gap || '—');
-    const row = document.createElement('div');
-    row.className = 'lb-row';
-    row.innerHTML = `
-      <span class="lb-pos-num ${posClass}">${d.pos}</span>
-      <div class="lb-color" style="background:${color}"></div>
-      <div class="lb-driver-info">
-        <div class="lb-driver-code">${tireHtml}${d.code}</div>
-        <div class="lb-team">${d.team || ''}</div>
-      </div>
-      <span class="lb-gap-col ${i===0?'gap-0':''}">${gapTxt}</span>
-      <span class="lb-laptime">${d.bestLap || '—'}</span>
-    `;
-    container.appendChild(row);
-  });
+function renderLiveLeaderboard(standings, displayLap) {
+  renderLeaderboardRows(standings || [], { uptoLap: displayLap });
 }
 
 let userSpeedMult = 1.0; // user-controlled multiplier on top of auto replaySpeed
