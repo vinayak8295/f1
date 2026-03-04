@@ -101,23 +101,31 @@ Real data includes:
           </div>
         </div>
 
-        <!-- TOP RIGHT: Lap counter -->
-        <div class="tv-lap-counter">
-          <div class="tv-lap-label">LAP</div>
-          <div class="tv-lap-nums"><span id="tvLapCurrent">0</span><span class="of-total"> / <span id="tvLapTotal">0</span></span></div>
-          <div class="tv-race-clock" id="tvRaceClock">+0:00:00</div>
-        </div>
-
-        <!-- RIGHT: Timing tower -->
-        <div class="tv-timing-tower">
-          <div class="tt-header">
-            <span>#</span><span></span><span style="padding-left:4px">DRIVER</span>
-            <span style="text-align:right">INTERVAL</span>
-            <span style="text-align:right">TYR</span>
+        <!-- TOP RIGHT: Circular lap HUD -->
+        <div class="tv-lap-counter" id="tvLapCounter">
+          <svg class="tv-lap-hud-svg" viewBox="0 0 220 220" aria-hidden="true">
+            <circle class="lap-ring-track" cx="110" cy="110" r="84"></circle>
+            <circle class="lap-ring-track-inner" cx="110" cy="110" r="70"></circle>
+            <circle class="lap-ring-progress-glow" cx="110" cy="110" r="84" pathLength="100"></circle>
+            <circle class="lap-ring-progress" cx="110" cy="110" r="84" pathLength="100"></circle>
+            <line class="lap-ring-tick" x1="110" y1="14" x2="110" y2="30"></line>
+            <line class="lap-ring-tick" x1="206" y1="110" x2="190" y2="110"></line>
+            <line class="lap-ring-tick" x1="110" y1="206" x2="110" y2="190"></line>
+            <line class="lap-ring-tick" x1="14" y1="110" x2="30" y2="110"></line>
+          </svg>
+          <div class="tv-lap-center">
+            <div class="tv-lap-nums"><span id="tvLapCurrent">0</span></div>
+            <div class="tv-lap-readout" id="tvLapReadout">LAPS 0 / 0</div>
+            <div class="tv-race-clock" id="tvRaceClock">+0:00:00</div>
           </div>
-          <div id="tvTimingRows"></div>
+          <span class="tv-lap-pct p0">0%</span>
+          <span class="tv-lap-pct p25">25%</span>
+          <span class="tv-lap-pct p50">50%</span>
+          <span class="tv-lap-pct p75">75%</span>
+          <span class="tv-lap-pct p100">100%</span>
         </div>
 
+     
         <!-- CENTER: Fastest lap flash -->
         <div class="tv-fastest-flash" id="tvFastestFlash">
           <div class="ffl-label">FASTEST LAP 🟣</div>

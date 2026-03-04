@@ -6,6 +6,8 @@ let playTimer = null;
 let playbackSpeed = 3; // seconds per lap (fast recap = 3min / 71 laps ≈ 2.5s/lap)
 let totalLaps = 0;
 let shownEvents = new Set();
+let activeLapChip = 0;
+let activeLapChipEl = null;
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
@@ -176,6 +178,8 @@ function initRecap() {
   totalLaps = raceData.race.laps || 71;
   currentLap = 0;
   shownEvents = new Set();
+  activeLapChip = 0;
+  activeLapChipEl = null;
 
   const race = raceData.race;
 
@@ -189,8 +193,12 @@ function initRecap() {
   if (circuit) circuit.textContent = (race.circuit || 'CIRCUIT').toUpperCase();
   const weather = document.getElementById('tvWeather');
   if (weather) weather.textContent = race.weather ? `☀ ${race.weather}` : '☀ SUNNY · DRY';
-  const tvTot = document.getElementById('tvLapTotal');
-  if (tvTot) tvTot.textContent = totalLaps;
+  const tvCur = document.getElementById('tvLapCurrent');
+  const tvReadout = document.getElementById('tvLapReadout');
+  const tvHud = document.getElementById('tvLapCounter');
+  if (tvCur) tvCur.textContent = '0';
+  if (tvReadout) tvReadout.textContent = `LAPS 0 / ${totalLaps}`;
+  if (tvHud) tvHud.style.setProperty('--lap-progress-pct', '0');
 
   // Show recap screen
   document.getElementById('idleScreen').style.display = 'none';
@@ -387,6 +395,31 @@ function buildTimelineMarkers() {
     marker.onclick = (ev) => { ev.stopPropagation(); seekToLap(e.lap); };
     container.appendChild(marker);
   });
+}
+
+function clampLapValue(lap) {
+  const n = Number(lap);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(n, totalLaps || 0));
+}
+
+function lapValueToCurrentLap(lapValue) {
+  if (lapValue <= 0) return 0;
+  return Math.min(totalLaps, Math.floor(lapValue) + 1);
+}
+
+function setActiveLapChip(lapNumber) {
+  const nextLap = Math.max(0, Math.min(totalLaps, Math.floor(lapNumber || 0)));
+  if (nextLap === activeLapChip) return;
+
+  if (activeLapChipEl) activeLapChipEl.classList.remove('active');
+  activeLapChip = nextLap;
+  activeLapChipEl = nextLap > 0 ? document.getElementById(`chip-${nextLap}`) : null;
+
+  if (activeLapChipEl) {
+    activeLapChipEl.classList.add('active');
+    activeLapChipEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
 }
 
 function renderTimingTower(drivers) {
@@ -2058,23 +2091,25 @@ function getLiveStandings(lap) {
 }
 
 function updatePlayback(lap) {
-  currentLap = lap;
+  const lapValue = clampLapValue(lap);
+  currentLap = lapValue;
+  const displayLap = lapValueToCurrentLap(lapValue);
 
   // Header badge
-  document.getElementById('headerLapBadge').textContent = `LAP ${lap} / ${totalLaps}`;
+  document.getElementById('headerLapBadge').textContent = `LAP ${displayLap} / ${totalLaps}`;
 
   // TV lap counter
   const tvCur = document.getElementById('tvLapCurrent');
-  const tvTot = document.getElementById('tvLapTotal');
-  if (tvCur) tvCur.textContent = lap;
-  if (tvTot) tvTot.textContent = totalLaps;
+  const tvReadout = document.getElementById('tvLapReadout');
+  if (tvCur) tvCur.textContent = displayLap;
+  if (tvReadout) tvReadout.textContent = `LAPS ${displayLap} / ${totalLaps}`;
 
   // Race clock — use real replayTime if available, else estimate
   let elapsed;
   if (usingRealData && replayFrames.length) {
     elapsed = Math.floor(replayTime);
   } else {
-    elapsed = Math.floor((lap / totalLaps) * 5400);
+    elapsed = Math.floor((lapValue / Math.max(totalLaps, 1)) * 5400);
   }
   const h = Math.floor(elapsed / 3600);
   const m = Math.floor((elapsed % 3600) / 60).toString().padStart(2, '0');
@@ -2083,20 +2118,15 @@ function updatePlayback(lap) {
   if (clockEl) clockEl.textContent = `+${h}:${m}:${s}`;
 
   // Progress bar
-  const pct = (lap / totalLaps * 100).toFixed(1);
+  const pct = ((lapValue / Math.max(totalLaps, 1)) * 100).toFixed(3);
+  const tvHud = document.getElementById('tvLapCounter');
+  if (tvHud) tvHud.style.setProperty('--lap-progress-pct', pct);
   document.getElementById('progressFill').style.width = `${pct}%`;
-  document.getElementById('tlTime').textContent = `LAP ${lap} / ${totalLaps}`;
-
-  // Lap chips
-  document.querySelectorAll('.lap-chip').forEach(c => c.classList.remove('active'));
-  const chip = document.getElementById(`chip-${lap}`);
-  if (chip) {
-    chip.classList.add('active');
-    chip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-  }
+  document.getElementById('tlTime').textContent = `LAP ${displayLap} / ${totalLaps}`;
+  setActiveLapChip(displayLap);
 
   // Update timing tower and ORDER tab with live standings
-  const standings = getLiveStandings(lap);
+  const standings = getLiveStandings(Math.max(1, displayLap));
   renderTimingTower(standings);
   renderLiveLeaderboard(standings);
 
@@ -2106,7 +2136,7 @@ function updatePlayback(lap) {
     if (car) { car.pos = d.pos; car.tyre = d.tyre; }
   });
 
-  showEvents(lap);
+  if (displayLap >= 1) showEvents(displayLap);
 }
 
 // ── Live leaderboard — updates ORDER tab during playback ──────────
@@ -2168,22 +2198,24 @@ function startPlay() {
       if (!isPlaying) return;
       const maxT = replayFrames[replayFrames.length - 1]?.t || 1;
       const rawLap = (replayTime / maxT) * totalLaps;
-      const lap = Math.min(totalLaps, Math.max(1, Math.round(rawLap)));
+      const lap = clampLapValue(rawLap);
       updatePlayback(lap); // always update — handles tyre changes, events etc
       if (replayTime >= maxT) {
         pausePlay();
         setStatus('✓ Recap complete!');
       }
-    }, 200); // 5x/sec is smooth enough for UI
+    }, 50); // 20x/sec keeps timeline motion smooth
   } else {
-    // Synthetic mode: one lap per interval
+    // Synthetic mode: advance in small lap fractions for smooth timeline motion
+    const tickMs = 50;
+    const lapPerSecond = (totalLaps / TARGET_DURATION) * BASE_PLAYBACK_MULT;
     clearInterval(playTimer);
     playTimer = setInterval(() => {
       if (!isPlaying) return;
-      currentLap = Math.min(currentLap + 1, totalLaps);
+      currentLap = Math.min(currentLap + lapPerSecond * userSpeedMult * (tickMs / 1000), totalLaps);
       updatePlayback(currentLap);
       if (currentLap >= totalLaps) { pausePlay(); setStatus('✓ Recap complete!'); }
-    }, (TARGET_DURATION / totalLaps) * 1000 / Math.max(BASE_PLAYBACK_MULT, 0.01));
+    }, tickMs);
   }
 }
 
@@ -2195,21 +2227,22 @@ function pausePlay() {
 }
 
 function seekToLap(lap) {
-  lap = Math.max(0, Math.min(lap, totalLaps));
+  lap = clampLapValue(lap);
   currentLap = lap;
   if (usingRealData && replayFrames.length) {
     const maxT = replayFrames[replayFrames.length - 1].t;
-    replayTime = (lap / totalLaps) * maxT;
+    replayTime = (lap / Math.max(totalLaps, 1)) * maxT;
   }
   updatePlayback(lap);
 }
 
-function seekRelative(delta) { seekToLap(currentLap + delta); }
+function seekRelative(delta) { seekToLap(Math.round(currentLap) + delta); }
 
 function seekClick(e) {
   if (!raceData) return;
   const rect = e.currentTarget.getBoundingClientRect();
-  seekToLap(Math.round((e.clientX - rect.left) / rect.width * totalLaps));
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(rect.width, 1)));
+  seekToLap(pct * totalLaps);
 }
 
 function switchTab(name, btn) {

@@ -1,122 +1,211 @@
-﻿  /* ─── PROGRESS / TIMELINE ─── */
-  .timeline-bar {
-    background: var(--bg-panel);
-    border-top: 1px solid var(--border);
-    padding: 12px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
+/* Progress / Timeline */
+.timeline-bar {
+  background: linear-gradient(180deg, rgba(18, 18, 28, 0.96), rgba(10, 10, 16, 0.98));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 12px 18px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 -10px 24px rgba(0, 0, 0, 0.32);
+}
 
-  .tl-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
+.tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 
-  .tl-btn {
-    background: var(--bg-highlight);
-    border: 1px solid var(--border-bright);
-    color: var(--text);
-    width: 32px; height: 32px;
-    border-radius: 2px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.85rem;
-    transition: all 0.2s;
-  }
+.tl-btn {
+  background: linear-gradient(180deg, rgba(35, 35, 52, 0.96), rgba(24, 24, 36, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text);
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
 
-  .tl-btn:hover { border-color: var(--f1-red); color: var(--f1-red); }
-  .tl-btn.active { background: var(--f1-red); border-color: var(--f1-red); }
+.tl-btn:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.38);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.32);
+  transform: translateY(-1px);
+}
 
-  .progress-track {
-    flex: 1;
-    height: 4px;
-    background: var(--border-bright);
-    border-radius: 2px;
-    cursor: pointer;
-    position: relative;
-  }
+.tl-btn.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--f1-red), #ff4d6d);
+  border-color: rgba(255, 133, 158, 0.9);
+  box-shadow: 0 0 0 1px rgba(232, 0, 45, 0.35), 0 8px 18px rgba(232, 0, 45, 0.4);
+}
 
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--f1-red), #ff6b6b);
-    border-radius: 2px;
-    transition: width 0.5s linear;
-    position: relative;
-  }
+.progress-track {
+  flex: 1;
+  min-width: 0;
+  height: 12px;
+  background: linear-gradient(180deg, rgba(8, 8, 12, 0.95), rgba(18, 18, 27, 0.95));
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
 
-  .progress-fill::after {
-    content: '';
-    position: absolute;
-    right: -4px; top: -4px;
-    width: 12px; height: 12px;
-    background: white;
-    border-radius: 50%;
-    border: 2px solid var(--f1-red);
-    box-shadow: 0 0 8px var(--f1-red);
-  }
+.progress-track::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0,
+    rgba(255, 255, 255, 0.04) 1px,
+    transparent 1px,
+    transparent 18px
+  );
+  pointer-events: none;
+}
 
-  /* Event markers on timeline */
-  .tl-marker {
-    position: absolute;
-    top: -4px;
-    width: 2px; height: 12px;
-    border-radius: 1px;
-    background: var(--accent-yellow);
-    cursor: pointer;
-    transform: translateX(-1px);
-  }
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #ff9040 0%, #ff5f42 24%, var(--f1-red) 58%, #ff395f 100%);
+  border-radius: inherit;
+  transition: width 80ms linear;
+  position: relative;
+  box-shadow: 0 0 14px rgba(232, 0, 45, 0.45);
+}
 
-  .tl-marker:hover::after {
-    content: attr(data-event);
-    position: absolute;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-card);
-    border: 1px solid var(--border-bright);
-    padding: 4px 8px;
-    font-size: 0.65rem;
-    white-space: nowrap;
-    font-family: 'IBM Plex Mono', monospace;
-    color: var(--text);
-    border-radius: 2px;
-    z-index: 20;
-  }
+.progress-fill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
+  opacity: 0.55;
+}
 
-  .tl-time {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.7rem;
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translate(50%, -50%);
+  background: #fff;
+  border: 2px solid var(--f1-red);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2), 0 0 14px rgba(232, 0, 45, 0.8);
+}
 
-  .tl-laps {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
+#timelineMarkers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 
-  .tl-laps::-webkit-scrollbar { display: none; }
+/* Event markers on timeline */
+.tl-marker {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--accent-yellow);
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateX(-1px);
+  opacity: 0.9;
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.45);
+}
 
-  .lap-chip {
-    flex-shrink: 0;
-    padding: 2px 6px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
+.tl-marker:hover::after {
+  content: attr(data-event);
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(14, 14, 22, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 4px 8px;
+  font-size: 0.65rem;
+  white-space: nowrap;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--text);
+  border-radius: 4px;
+  z-index: 20;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.36);
+}
 
-  .lap-chip:hover { border-color: var(--text-dim); color: var(--text-dim); }
-  .lap-chip.active { border-color: var(--f1-red); color: var(--f1-red); background: rgba(232,0,45,0.1); }
-  .lap-chip.event { border-color: var(--accent-yellow); color: var(--accent-yellow); }
+.tl-time {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
 
+.tl-laps {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 34px;
+  column-gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  padding: 1px 1px 2px;
+}
+
+.tl-laps::-webkit-scrollbar {
+  display: none;
+}
+
+.lap-chip {
+  width: 34px;
+  padding: 3px 0;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(26, 26, 39, 0.96), rgba(16, 16, 24, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  color: #6f7294;
+  cursor: pointer;
+  transition: transform 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  scroll-snap-align: center;
+}
+
+.lap-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: var(--text);
+}
+
+.lap-chip.active {
+  border-color: rgba(255, 128, 147, 0.95);
+  color: #ffd7de;
+  background: linear-gradient(180deg, rgba(232, 0, 45, 0.28), rgba(120, 0, 28, 0.28));
+  box-shadow: 0 0 12px rgba(232, 0, 45, 0.35);
+}
+
+.lap-chip.event {
+  border-color: rgba(255, 206, 85, 0.7);
+  color: #ffcf55;
+}
+
+.lap-chip.event.active {
+  border-color: #ffcf55;
+  color: #ffe8ad;
+  box-shadow: 0 0 12px rgba(255, 207, 85, 0.35);
+}
