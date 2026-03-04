@@ -461,6 +461,9 @@ let DRS_ZONES = [{ start:0.88, end:0.05 }, { start:0.52, end:0.62 }];
 const TRACK_EDGE_PADDING_CSS = 58; // Smaller padding so the track occupies more viewport area.
 const TRACK_WIDTH_MULT = 1.48;     // Wider visual track for better racing room.
 const CAR_VISUAL_SCALE = 1.2;      // Larger cars while preserving proportions.
+const CAR_GAP_MULT = 3.8;          // Front/back spacing multiplier (recommended: 1.0–5.0).
+const CAR_LENGTH_SCALE = 0.88;     // <1 makes cars visually shorter length-wise.
+const CAR_BRIGHTNESS = 1.18;       // Global brightness boost for car visibility.
 
 // ── Build path from raw normalized [x,y] points (Catmull-Rom spline) ──
 function buildTrackPath(W, H, waypoints) {
@@ -545,6 +548,89 @@ function buildNormals(path) {
     const len = Math.sqrt(dx*dx+dy*dy)||1;
     return [-dy/len, dx/len];
   });
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function normalizeAngle(rad) {
+  let a = rad;
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+function smoothAngle(current, target, t) {
+  if (!Number.isFinite(current)) return target;
+  const delta = normalizeAngle(target - current);
+  return current + delta * Math.max(0, Math.min(1, t));
+}
+
+function catmullRomPoint(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const x = 0.5 * (
+    (2 * p1[0]) +
+    (-p0[0] + p2[0]) * t +
+    (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+    (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+  );
+  const y = 0.5 * (
+    (2 * p1[1]) +
+    (-p0[1] + p2[1]) * t +
+    (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+    (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+  );
+  return [x, y];
+}
+
+function catmullRomTangent(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const x = 0.5 * (
+    (-p0[0] + p2[0]) +
+    2 * (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t +
+    3 * (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t2
+  );
+  const y = 0.5 * (
+    (-p0[1] + p2[1]) +
+    2 * (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t +
+    3 * (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t2
+  );
+  return [x, y];
+}
+
+function findNearestTrackIndex(x, y, hintIdx = -1) {
+  const N = trackPath.length;
+  if (!N) return 0;
+
+  let bestIdx = 0;
+  let bestDist = Infinity;
+
+  if (Number.isFinite(hintIdx) && hintIdx >= 0) {
+    const center = ((Math.floor(hintIdx) % N) + N) % N;
+    const span = Math.min(140, Math.max(24, Math.floor(N / 10)));
+    for (let d = -span; d <= span; d++) {
+      const i = (center + d + N) % N;
+      const [tx, ty] = trackPath[i];
+      const dist = (x - tx) * (x - tx) + (y - ty) * (y - ty);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  for (let i = 0; i < N; i += 3) {
+    const [tx, ty] = trackPath[i];
+    const dist = (x - tx) * (x - tx) + (y - ty) * (y - ty);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 let trackPath = [];
@@ -1291,7 +1377,7 @@ function spawnCars() {
 
   } else {
     // ── SYNTHETIC MODE: path-based animation ─────────────────────
-    const spacing = totalPts * 0.032;
+    const spacing = totalPts * 0.066;
     trackCars = drivers.map((d, i) => {
       const baseSpd = 68 - i * 0.5;
       return {
@@ -1358,6 +1444,8 @@ function drawCarSprite(ctx, cx, cy, angle, car, isLeader) {
   const scale = (isLeader ? 1.06 : 1) * (carSpriteConfig.scale || 1);
   const spriteW = 46 * scale * CAR_VISUAL_SCALE;
   const spriteH = spriteW / aspect;
+  const drawW = spriteW * CAR_LENGTH_SCALE;
+  const drawH = spriteH * 1.03;
   const rot = angle + (carSpriteConfig.rotationDeg || 0) * Math.PI / 180;
 
   ctx.save();
@@ -1369,7 +1457,9 @@ function drawCarSprite(ctx, cx, cy, angle, car, isLeader) {
   ctx.shadowColor = 'rgba(0,0,0,0.22)';
   ctx.shadowBlur = 1.4;
   ctx.shadowOffsetY = 0.6;
-  ctx.drawImage(frame.canvas, -spriteW * 0.5, -spriteH / 2, spriteW, spriteH);
+  ctx.filter = `brightness(${CAR_BRIGHTNESS}) saturate(1.14) contrast(1.05)`;
+  ctx.drawImage(frame.canvas, -drawW * 0.5, -drawH / 2, drawW, drawH);
+  ctx.filter = 'none';
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
   ctx.restore();
@@ -1430,7 +1520,11 @@ function drawCar(ctx, cx, cy, angle, car, isLeader) {
   ctx.restore();
 
   // ══════ CAR BODY ════════════════════════════════════════════════
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.scale(CAR_LENGTH_SCALE, 1.03);
+  ctx.filter = `brightness(${CAR_BRIGHTNESS}) saturate(1.08)`;
 
   // ── TYRES ────────────────────────────────────────────────────────
   const wheels = [
@@ -1561,15 +1655,18 @@ function drawCar(ctx, cx, cy, angle, car, isLeader) {
     ctx.stroke(); ctx.shadowBlur=0;
   }
 
+  ctx.filter = 'none';
   ctx.restore(); // end car transform
 
   drawDriverLabel(ctx, cx, cy, car, isLeader);
 }
 
 function applyOvertakeLaneOffsets(cars, dt) {
-  const minSep = 52 * CAR_VISUAL_SCALE;      // desired center-to-center spacing
-  const laneMax = 22 * CAR_VISUAL_SCALE;     // max side offset from centerline
-  const longMax = 16 * CAR_VISUAL_SCALE;     // max fore/aft nudging from base telemetry point
+  const gapMult = Math.max(1, Math.min(CAR_GAP_MULT, 8));
+  const minSep = 48 * CAR_VISUAL_SCALE; // local collision relief distance
+  const laneMax = 14 * CAR_VISUAL_SCALE; // keep width-wise motion subtle
+  const orderLongGap = 36 * CAR_VISUAL_SCALE * gapMult; // requested front/back gap
+  const longMax = Math.max(88 * CAR_VISUAL_SCALE, orderLongGap * 1.55); // don't cap away user gap
   const iterations = 4;
   const eps = 1e-3;
 
@@ -1583,12 +1680,33 @@ function applyOvertakeLaneOffsets(cars, dt) {
   // Deterministic lane staggering helps corner packs before repulsion kicks in.
   const posOrder = [...cars].sort((a, b) => (a.pos || 999) - (b.pos || 999));
   posOrder.forEach((car, i) => {
-    const laneSeed = ((i % 5) - 2) * 5 * CAR_VISUAL_SCALE;
+    const laneSeed = ((i % 3) - 1) * 2.2 * CAR_VISUAL_SCALE;
     const nx = -Math.sin(car.angle || 0);
     const ny = Math.cos(car.angle || 0);
     car._rx += nx * laneSeed;
     car._ry += ny * laneSeed;
   });
+
+  // Enforce extra longitudinal gap by race order (front/back spacing).
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 1; i < posOrder.length; i++) {
+      const ahead = posOrder[i - 1];
+      const behind = posOrder[i];
+      const ang = (Number.isFinite(behind.angle) ? behind.angle : (ahead.angle || 0));
+      const tx = Math.cos(ang);
+      const ty = Math.sin(ang);
+      const gap = (ahead._rx - behind._rx) * tx + (ahead._ry - behind._ry) * ty;
+      if (gap >= orderLongGap) continue;
+      const deficit = (orderLongGap - gap);
+      // Push the following car back harder than we pull the car ahead forward.
+      ahead._rx += tx * deficit * 0.16;
+      ahead._ry += ty * deficit * 0.16;
+      behind._rx -= tx * deficit * 0.92;
+      behind._ry -= ty * deficit * 0.92;
+      ahead._localDensity++;
+      behind._localDensity++;
+    }
+  }
 
   // Push cars apart in screen-space when too close.
   for (let it = 0; it < iterations; it++) {
@@ -1615,7 +1733,7 @@ function applyOvertakeLaneOffsets(cars, dt) {
   }
 
   // Constrain offset so cars still follow the track naturally.
-  const blend = Math.min(1, dt * 12);
+  const blend = Math.min(1, dt * 7.2);
   cars.forEach((car) => {
     const ang = car.angle || 0;
     const tx = Math.cos(ang), ty = Math.sin(ang);
@@ -1626,8 +1744,38 @@ function applyOvertakeLaneOffsets(cars, dt) {
     const lateral = Math.max(-laneMax, Math.min(laneMax, dx * nx + dy * ny));
     const longitudinal = Math.max(-longMax, Math.min(longMax, dx * tx + dy * ty));
 
-    const targetX = car.canvasX + nx * lateral + tx * longitudinal;
-    const targetY = car.canvasY + ny * lateral + ty * longitudinal;
+    let targetX = car.canvasX + nx * lateral + tx * longitudinal;
+    let targetY = car.canvasY + ny * lateral + ty * longitudinal;
+
+    // Hard safety clamp: keep visual offsets within track corridor, tighter in corners.
+    const idx = findNearestTrackIndex(car.canvasX, car.canvasY, car._trackIdxHint);
+    car._trackIdxHint = idx;
+    const N = trackPath.length;
+    const base = trackPath[idx] || [car.canvasX, car.canvasY];
+    const prev = trackPath[(idx - 2 + N) % N] || base;
+    const next = trackPath[(idx + 2) % N] || base;
+    const t0 = Math.atan2(base[1] - prev[1], base[0] - prev[0]);
+    const t1 = Math.atan2(next[1] - base[1], next[0] - base[0]);
+    const bend = Math.abs(normalizeAngle(t1 - t0));
+    const cornerFactor = Math.min(1, bend / 0.85);
+
+    const tdx = next[0] - prev[0];
+    const tdy = next[1] - prev[1];
+    const tLen = Math.hypot(tdx, tdy) || 1;
+    const ux = tdx / tLen;
+    const uy = tdy / tLen;
+    const vx = -uy;
+    const vy = ux;
+
+    const laneHard = (11 + 1.5 * (1 - cornerFactor)) * TRACK_WIDTH_MULT;
+    const longHard = (42 - 18 * cornerFactor) * CAR_VISUAL_SCALE;
+
+    const rx = targetX - base[0];
+    const ry = targetY - base[1];
+    const pLat = Math.max(-laneHard, Math.min(laneHard, rx * vx + ry * vy));
+    const pLong = Math.max(-longHard, Math.min(longHard, rx * ux + ry * uy));
+    targetX = base[0] + vx * pLat + ux * pLong;
+    targetY = base[1] + vy * pLat + uy * pLong;
 
     if (!Number.isFinite(car.renderX) || !Number.isFinite(car.renderY)) {
       car.renderX = targetX;
@@ -1718,23 +1866,38 @@ function startRenderLoop(canvas) {
             nx = c0.x; ny = c0.y;
           }
           const [px, py] = realPosToCanvas(nx, ny, W, H);
+          if (!Number.isFinite(car.canvasX) || !Number.isFinite(car.canvasY)) {
+            car.canvasX = px;
+            car.canvasY = py;
+          }
           const dx = px - car.canvasX;
           const dy = py - car.canvasY;
-          if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3) {
-            car.angle = Math.atan2(dy, dx);
+          const dist = Math.hypot(dx, dy);
+          const posBlend = Math.min(1, dt * 14);
+          car.canvasX += dx * posBlend;
+          car.canvasY += dy * posBlend;
+          if (dist > 0.18) {
+            const targetAngle = Math.atan2(dy, dx);
+            car.angle = smoothAngle(car.angle, targetAngle, Math.min(1, dt * 10));
           }
-          car.canvasX = px;
-          car.canvasY = py;
         }
       } else {
         // Synthetic path movement
-        const idx  = Math.floor(car.progress) % N;
-        const nidx = (idx + 1) % N;
-        const [cx, cy] = trackPath[idx];
-        const [nx, ny] = trackPath[nidx];
-        car.canvasX = cx; car.canvasY = cy;
-        car.angle   = Math.atan2(ny-cy, nx-cx);
-        const curv  = curvature[idx] || 0;
+        const p = ((car.progress % N) + N) % N;
+        const idx = Math.floor(p);
+        const frac = p - idx;
+        const i0 = (idx - 1 + N) % N;
+        const i1 = idx;
+        const i2 = (idx + 1) % N;
+        const i3 = (idx + 2) % N;
+        const [cx, cy] = catmullRomPoint(trackPath[i0], trackPath[i1], trackPath[i2], trackPath[i3], frac);
+        const [tx, ty] = catmullRomTangent(trackPath[i0], trackPath[i1], trackPath[i2], trackPath[i3], frac);
+        car.canvasX = cx;
+        car.canvasY = cy;
+        car._trackIdxHint = idx;
+        const targetAngle = Math.atan2(ty, tx);
+        car.angle = smoothAngle(car.angle, targetAngle, Math.min(1, dt * 13));
+        const curv = lerp(curvature[idx] || 0, curvature[(idx + 1) % N] || 0, frac);
         const tspd  = car.baseSpeed * Math.max(0.38, 1 - curv * 2.2);
         car.speed  += (tspd - car.speed) * Math.min(dt*4, 1);
         car.progress += car.speed * dt * BASE_PLAYBACK_MULT;
