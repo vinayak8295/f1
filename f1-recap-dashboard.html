@@ -125,7 +125,15 @@ Real data includes:
           <span class="tv-lap-pct p100">100%</span>
         </div>
 
-     
+        <!-- LEFT: Broadcast timing tower -->
+        <div class="tv-timing-tower" id="tvTimingTower">
+          <div class="tt-topbar">
+            <span class="tt-brand">F1</span>
+          </div>
+          <div class="tt-lapline" id="tvTowerLap">LAP 0 / 0</div>
+          <div class="tt-list" id="tvTimingRows"></div>
+        </div>
+
         <!-- CENTER: Fastest lap flash -->
         <div class="tv-fastest-flash" id="tvFastestFlash">
           <div class="ffl-label">FASTEST LAP 🟣</div>
@@ -159,60 +167,6 @@ Real data includes:
         <span class="tl-time" id="tlTime">LAP 0 / 0</span>
       </div>
       <div class="tl-laps" id="lapChips"></div>
-    </div>
-  </div>
-
-  <!-- RIGHT: DATA SIDEBAR -->
-  <div class="right-panel">
-    <div class="sidebar-tabs">
-      <button class="stab active" onclick="switchTab('leaderboard', this)">ORDER</button>
-      <button class="stab" onclick="switchTab('pitstops', this)">PITS</button>
-      <button class="stab" onclick="switchTab('strategy', this)">TYRES</button>
-      <button class="stab" onclick="switchTab('stats', this)">STATS</button>
-    </div>
-
-    <div class="sidebar-content">
-
-      <!-- Leaderboard Tab -->
-      <div class="tab-pane active" id="tab-leaderboard">
-        <div class="lb-table">
-          <div class="lb-thead">
-            <span>#</span>
-            <span>PHOTO</span>
-            <span>DRIVER</span>
-            <span style="text-align:right">GAP</span>
-            <span style="text-align:right">PITS</span>
-          </div>
-          <div id="leaderboardRows"></div>
-        </div>
-      </div>
-
-      <!-- Pit Stops Tab -->
-      <div class="tab-pane" id="tab-pitstops">
-        <div class="section-header">
-          <span>PIT STOP HISTORY</span>
-          <span id="totalPits" style="color:var(--text-dim)">0 STOPS</span>
-        </div>
-        <div id="pitstopRows"></div>
-      </div>
-
-      <!-- Strategy Tab -->
-      <div class="tab-pane" id="tab-strategy">
-        <div class="section-header">TYRE STRATEGY</div>
-        <div id="strategyRows"></div>
-        <div style="padding: 10px 12px; display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border);">
-          <span><span class="tire-badge tire-S">S</span> <span style="font-size:0.65rem;color:var(--text-dim)">Soft</span></span>
-          <span><span class="tire-badge tire-M">M</span> <span style="font-size:0.65rem;color:var(--text-dim)">Medium</span></span>
-          <span><span class="tire-badge tire-H">H</span> <span style="font-size:0.65rem;color:var(--text-dim)">Hard</span></span>
-          <span><span class="tire-badge tire-I">I</span> <span style="font-size:0.65rem;color:var(--text-dim)">Inter</span></span>
-        </div>
-      </div>
-
-      <!-- Stats Tab -->
-      <div class="tab-pane" id="tab-stats">
-        <div id="statsContent"></div>
-      </div>
-
     </div>
   </div>
 

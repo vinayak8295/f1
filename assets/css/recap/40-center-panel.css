@@ -287,93 +287,157 @@
     transform: translate(2px, -50%);
   }
 
-  /* ── TIMING TOWER (F1 TV-style right side) ── */
+  /* ── TIMING TOWER (Broadcast left side) ── */
   .tv-timing-tower {
     position: absolute;
-    top: 226px;
-    right: 16px;
-    z-index: 20;
-    width: 210px;
+    top: 410px;
+    left: 14px;
+    z-index: 22;
+    width: 236px;
+    background: linear-gradient(180deg, rgba(16,21,36,0.96), rgba(8,11,22,0.96));
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.45);
+    pointer-events: none;
+    backdrop-filter: blur(5px);
   }
 
-  .tt-header {
-    background: var(--f1-red);
-    display: grid;
-    grid-template-columns: 22px 6px 1fr 58px 30px;
-    gap: 0;
-    padding: 3px 6px;
-    font-family: 'Orbitron', monospace;
-    font-size: 0.42rem;
-    letter-spacing: 2px;
-    color: rgba(255,255,255,0.8);
+  .tt-topbar {
+    min-height: 36px;
+    display: flex;
     align-items: center;
+    padding: 8px 12px 6px;
+    background: linear-gradient(180deg, rgba(9,14,28,0.98), rgba(11,16,32,0.88));
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .tt-brand {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.18rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #fff;
+    text-transform: uppercase;
+    line-height: 1;
+    text-shadow: 0 2px 7px rgba(0,0,0,0.5);
+  }
+
+  .tt-lapline {
+    padding: 7px 12px 8px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 1.7px;
+    color: rgba(255,255,255,0.94);
+    border-bottom: 1px solid rgba(255,255,255,0.09);
+    background: rgba(255,255,255,0.02);
+  }
+
+  .tt-list {
+    max-height: min(64vh, 600px);
+    overflow: hidden;
   }
 
   .tt-row {
     display: grid;
-    grid-template-columns: 22px 6px 1fr 58px 30px;
-    gap: 0;
-    padding: 2.5px 6px;
+    grid-template-columns: 24px 18px 1fr 66px 3px;
     align-items: center;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    transition: background 0.3s;
-    backdrop-filter: blur(8px);
+    column-gap: 7px;
+    min-height: 28px;
+    padding: 3px 8px;
+    background: rgba(8,12,24,0.86);
+    transition: transform 0.24s ease, background 0.24s ease;
   }
 
-  .tt-row:nth-child(odd)  { background: rgba(10,10,20,0.88); }
-  .tt-row:nth-child(even) { background: rgba(14,14,26,0.88); }
-  .tt-row.tt-leader       { background: rgba(232,0,45,0.12); }
-  .tt-row.tt-p2           { background: rgba(180,180,180,0.06); }
-  .tt-row.tt-p3           { background: rgba(180,120,0,0.08); }
+  .tt-row + .tt-row {
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .tt-row:nth-child(even) { background: rgba(12,16,30,0.86); }
+  .tt-row.tt-leader {
+    background: linear-gradient(90deg, rgba(232,0,45,0.19), rgba(20,26,45,0.88) 50%);
+  }
+  .tt-row.tt-out {
+    opacity: 0.58;
+  }
 
   .tt-pos {
     font-family: 'Orbitron', monospace;
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: rgba(255,255,255,0.45);
+    font-size: 0.88rem;
+    font-weight: 800;
+    color: rgba(255,255,255,0.95);
+    line-height: 1;
+    text-align: center;
   }
-  .tt-pos.ldr { color: var(--accent-yellow); }
-  .tt-pos.p2  { color: #c0c0c0; }
-  .tt-pos.p3  { color: #cd7f32; }
 
-  .tt-teambar {
-    width: 4px;
+  .tt-row.tt-leader .tt-pos {
+    background: var(--f1-red);
+    border-radius: 2px;
+    padding: 5px 0 4px;
+    color: #fff;
+  }
+
+  .tt-team-logo {
+    width: 16px;
     height: 16px;
-    border-radius: 1px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.17);
+  }
+
+  .tt-team-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .tt-driver {
     font-family: 'Rajdhani', sans-serif;
-    font-size: 0.75rem;
+    font-size: 1.12rem;
     font-weight: 700;
-    letter-spacing: 1px;
-    color: white;
-    padding-left: 4px;
+    letter-spacing: 0.8px;
+    color: #f4f6ff;
+    line-height: 1;
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .tt-gap {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.6rem;
-    color: rgba(255,255,255,0.5);
+    font-size: 0.95rem;
+    color: rgba(255,255,255,0.9);
     text-align: right;
+    line-height: 1;
     white-space: nowrap;
   }
-  .tt-gap.leader-gap { color: var(--accent-green); font-size: 0.55rem; }
-  .tt-gap.pit-gap    { color: var(--accent-yellow); }
 
-  .tt-tyre {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
+  .tt-gap.leader-gap {
+    color: #fff;
+    font-weight: 600;
   }
 
-  .tt-tyre-dot {
-    width: 9px; height: 9px;
-    border-radius: 50%;
-    border: 1px solid rgba(0,0,0,0.4);
-    font-size: 0;
+  .tt-gap.out-gap {
+    color: rgba(255,255,255,0.72);
+  }
+
+  .tt-ind {
+    width: 2px;
+    height: 12px;
+    border-radius: 2px;
+    justify-self: end;
+    background: #8efb71;
+    opacity: 0.95;
+  }
+
+  .tt-row.tt-out .tt-ind {
+    background: rgba(255,255,255,0.33);
   }
 
   /* ── BOTTOM BAR: F1 TV banner ── */
@@ -554,9 +618,23 @@
     }
 
     .tv-timing-tower {
-      top: 198px;
-      width: 196px;
-      right: 10px;
+      top: 70px;
+      left: 10px;
+      width: 208px;
+    }
+
+    .tt-driver {
+      font-size: 0.98rem;
+    }
+
+    .tt-gap {
+      font-size: 0.86rem;
+    }
+
+    .tt-row {
+      grid-template-columns: 22px 16px 1fr 58px 3px;
+      min-height: 25px;
+      padding: 3px 7px;
     }
   }
 

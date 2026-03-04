@@ -51,45 +51,71 @@
 
   .lb-thead {
     display: grid;
-    grid-template-columns: 24px 30px minmax(0, 1fr) 56px 32px;
-    padding: 6px 12px;
+    grid-template-columns: 30px 36px minmax(0, 1fr) 66px 34px;
+    padding: 7px 12px;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border);
     font-family: 'Orbitron', monospace;
-    font-size: 0.5rem;
+    font-size: 0.54rem;
     color: var(--text-muted);
     letter-spacing: 2px;
-    gap: 6px;
+    gap: 8px;
   }
 
   .lb-row {
     display: grid;
-    grid-template-columns: 24px 30px minmax(0, 1fr) 56px 32px;
-    padding: 7px 12px;
+    grid-template-columns: 30px 36px minmax(0, 1fr) 66px 34px;
+    padding: 8px 12px;
     border-bottom: 1px solid rgba(255,255,255,0.03);
-    gap: 6px;
+    gap: 8px;
     align-items: center;
+    min-height: 46px;
+    position: relative;
+    will-change: transform;
     transition: background 0.2s;
     cursor: pointer;
   }
 
   .lb-row:hover { background: var(--bg-highlight); }
   .lb-thead span:nth-child(2) { text-align: center; }
+  .lb-thead span:nth-child(5) { text-align: right; }
+
+  .lb-pos-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    min-height: 24px;
+  }
 
   .lb-pos-num {
     font-family: 'Orbitron', monospace;
-    font-size: 0.65rem;
+    font-size: 0.78rem;
     font-weight: 700;
     color: var(--text-dim);
+    line-height: 1;
   }
 
   .lb-pos-num.p1 { color: var(--accent-yellow); }
   .lb-pos-num.p2 { color: #c0c0c0; }
   .lb-pos-num.p3 { color: #cd7f32; }
 
+  .lb-pos-change {
+    min-height: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.5rem;
+    line-height: 1;
+    letter-spacing: 0.3px;
+    color: transparent;
+  }
+
+  .lb-pos-change.up { color: var(--accent-green); }
+  .lb-pos-change.down { color: var(--f1-red); }
+
   .lb-driver-photo {
-    width: 24px;
-    height: 24px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     overflow: hidden;
     position: relative;
@@ -105,7 +131,7 @@
     align-items: center;
     justify-content: center;
     font-family: 'Orbitron', monospace;
-    font-size: 0.56rem;
+    font-size: 0.62rem;
     font-weight: 700;
     color: rgba(255,255,255,0.92);
     z-index: 0;
@@ -122,7 +148,7 @@
 
   .lb-color {
     width: 3px;
-    height: 12px;
+    height: 16px;
     border-radius: 2px;
     flex-shrink: 0;
   }
@@ -135,16 +161,17 @@
   .lb-driver-line {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
   }
 
   .lb-driver-code {
     font-weight: 700;
-    font-size: 0.74rem;
+    font-size: 0.82rem;
     letter-spacing: 1px;
     white-space: nowrap;
     min-width: 0;
+    line-height: 1;
   }
 
   .lb-driver-line .tire-badge {
@@ -154,14 +181,15 @@
 
   .lb-tyre-unknown {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.64rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
     margin-left: 2px;
   }
 
   .lb-team {
-    font-size: 0.55rem;
-    color: var(--text-muted);
+    font-size: 0.63rem;
+    color: var(--text-dim);
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -169,14 +197,14 @@
 
   .lb-gap-col {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.65rem;
+    font-size: 0.74rem;
     color: var(--text-dim);
     text-align: right;
   }
 
   .lb-pit-count {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.65rem;
+    font-size: 0.74rem;
     color: var(--text-dim);
     text-align: right;
   }
@@ -187,13 +215,41 @@
   /* Tire badge */
   .tire-badge {
     display: inline-block;
-    width: 14px; height: 14px;
+    width: 16px; height: 16px;
     border-radius: 50%;
-    line-height: 14px;
+    line-height: 16px;
     text-align: center;
-    font-size: 0.5rem;
+    font-size: 0.52rem;
     font-weight: 700;
     margin-right: 3px;
+  }
+
+  .lb-row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 5px;
+    bottom: 5px;
+    width: 2px;
+    border-radius: 2px;
+    opacity: 0;
+    transform-origin: center;
+  }
+
+  .lb-row.lb-overtake-up::before {
+    background: var(--accent-green);
+    animation: lbOvertakePulse 0.95s ease;
+  }
+
+  .lb-row.lb-overtake-down::before {
+    background: var(--f1-red);
+    animation: lbOvertakePulse 0.95s ease;
+  }
+
+  @keyframes lbOvertakePulse {
+    0% { opacity: 0; transform: scaleY(0.2); }
+    22% { opacity: 1; transform: scaleY(0.8); }
+    100% { opacity: 0; transform: scaleY(1); }
   }
 
   .tire-S { background: var(--f1-red); color: white; }

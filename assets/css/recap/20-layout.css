@@ -1,14 +1,14 @@
 ﻿  /* ─── LAYOUT ─── */
   .app-layout {
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr) 280px;
+    grid-template-columns: 320px minmax(0, 1fr);
     grid-template-rows: 1fr;
     height: calc(100vh - 56px);
     gap: 0;
   }
 
   .app-layout.no-input {
-    grid-template-columns: 0 minmax(0, 1fr) 270px;
+    grid-template-columns: 0 minmax(0, 1fr);
   }
 
   .app-layout.no-input .left-panel {

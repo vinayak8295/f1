@@ -8,6 +8,14 @@ let totalLaps = 0;
 let shownEvents = new Set();
 let activeLapChip = 0;
 let activeLapChipEl = null;
+let leaderboardPrevPosByCode = {};
+let leaderboardLastOrderSignature = '';
+let leaderboardPrevOrderCodes = [];
+let leaderboardFlipToken = 0;
+let leaderboardLastAnimatedSwapKey = '';
+let leaderboardLastAnimatedSwapAt = 0;
+const leaderboardRowCache = new Map();
+const leaderboardChangeTimers = new Map();
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
@@ -180,6 +188,7 @@ function initRecap() {
   shownEvents = new Set();
   activeLapChip = 0;
   activeLapChipEl = null;
+  resetLeaderboardState();
 
   const race = raceData.race;
 
@@ -195,9 +204,11 @@ function initRecap() {
   if (weather) weather.textContent = race.weather ? `☀ ${race.weather}` : '☀ SUNNY · DRY';
   const tvCur = document.getElementById('tvLapCurrent');
   const tvReadout = document.getElementById('tvLapReadout');
+  const tvTowerLap = document.getElementById('tvTowerLap');
   const tvHud = document.getElementById('tvLapCounter');
   if (tvCur) tvCur.textContent = '0';
   if (tvReadout) tvReadout.textContent = `LAPS 0 / ${totalLaps}`;
+  if (tvTowerLap) tvTowerLap.textContent = `LAP 0 / ${totalLaps}`;
   if (tvHud) tvHud.style.setProperty('--lap-progress-pct', '0');
 
   // Show recap screen
@@ -206,39 +217,56 @@ function initRecap() {
   const layout = document.querySelector('.app-layout');
   if (layout) layout.classList.add('no-input');
 
-  // Sidebar
-  renderLeaderboard();
-  renderPitStops();
-  renderStrategy();
-  renderStats();
+  // Sidebar (optional)
+  if (document.querySelector('.right-panel')) {
+    renderLeaderboard();
+    renderPitStops();
+    renderStrategy();
+    renderStats();
+  }
 
   // Timeline
   buildLapChips();
   buildTimelineMarkers();
 
   // Initial timing tower
-  renderTimingTower();
+  safeRenderTimingTower();
 
   // Track
+  let trackReady = true;
   if (trackAnimFrame) cancelAnimationFrame(trackAnimFrame);
-  spawnCars();
+  try {
+    spawnCars();
+  } catch (err) {
+    trackReady = false;
+    console.error('Track spawn failed:', err);
+    setStatus(`⚠ Track render failed: ${err?.message || err}`);
+  }
 
-  setStatus(`${race.circuit || race.name} · ${totalLaps} laps · ${race.date || ''}`);
+  if (trackReady) {
+    setStatus(`${race.circuit || race.name} · ${totalLaps} laps · ${race.date || ''}`);
+  }
   startPlay();
 }
 
 function renderLeaderboard() {
   const drivers = raceData.drivers || [];
-  renderLeaderboardRows(drivers, { animate: true, uptoLap: 0 });
+  renderLeaderboardRows(drivers, { animate: true, uptoLap: 0, displayLap: 0, live: false });
 }
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function resetLeaderboardState() {
+  leaderboardPrevPosByCode = {};
+  leaderboardLastOrderSignature = '';
+  leaderboardPrevOrderCodes = [];
+  leaderboardFlipToken++;
+  leaderboardLastAnimatedSwapKey = '';
+  leaderboardLastAnimatedSwapAt = 0;
+
+  leaderboardChangeTimers.forEach(timer => clearTimeout(timer));
+  leaderboardChangeTimers.clear();
+
+  leaderboardRowCache.forEach(row => row.remove());
+  leaderboardRowCache.clear();
 }
 
 function normalizeDriverCode(code) {
@@ -286,52 +314,248 @@ function getPitStopCountsByDriver(uptoLap = Infinity) {
   return counts;
 }
 
+function createLeaderboardRow(driverCode) {
+  const row = document.createElement('div');
+  row.className = 'lb-row';
+  row.dataset.code = driverCode;
+  row.innerHTML = `
+    <div class="lb-pos-wrap">
+      <span class="lb-pos-num">-</span>
+      <span class="lb-pos-change"></span>
+    </div>
+    <div class="lb-driver-photo" data-fallback="?">
+      <img class="lb-driver-photo-img" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" style="display:none">
+    </div>
+    <div class="lb-driver-info">
+      <div class="lb-driver-line">
+        <div class="lb-color"></div>
+        <span class="lb-driver-code">---</span>
+        <span class="lb-tyre">—</span>
+      </div>
+      <div class="lb-team">—</div>
+    </div>
+    <span class="lb-gap-col">—</span>
+    <span class="lb-pit-count">0</span>
+  `;
+
+  row._parts = {
+    posNum: row.querySelector('.lb-pos-num'),
+    posChange: row.querySelector('.lb-pos-change'),
+    photoWrap: row.querySelector('.lb-driver-photo'),
+    photoImg: row.querySelector('.lb-driver-photo-img'),
+    colorBar: row.querySelector('.lb-color'),
+    code: row.querySelector('.lb-driver-code'),
+    tyre: row.querySelector('.lb-tyre'),
+    team: row.querySelector('.lb-team'),
+    gap: row.querySelector('.lb-gap-col'),
+    pits: row.querySelector('.lb-pit-count'),
+  };
+
+  return row;
+}
+
+function clearPositionChangeIndicator(driverCode, row) {
+  const timer = leaderboardChangeTimers.get(driverCode);
+  if (timer) clearTimeout(timer);
+  leaderboardChangeTimers.delete(driverCode);
+  if (!row || !row._parts) return;
+  row.classList.remove('lb-overtake-up', 'lb-overtake-down');
+  row._parts.posChange.textContent = '';
+  row._parts.posChange.className = 'lb-pos-change';
+}
+
+function applyPositionChangeIndicator(driverCode, row, delta) {
+  if (!row || !row._parts || !delta) return;
+  clearPositionChangeIndicator(driverCode, row);
+
+  const movedUp = delta > 0;
+  row.classList.add(movedUp ? 'lb-overtake-up' : 'lb-overtake-down');
+  row._parts.posChange.textContent = `${movedUp ? '▲' : '▼'}${Math.abs(delta)}`;
+  row._parts.posChange.classList.add(movedUp ? 'up' : 'down');
+
+  const timer = setTimeout(() => {
+    clearPositionChangeIndicator(driverCode, row);
+  }, 1050);
+  leaderboardChangeTimers.set(driverCode, timer);
+}
+
+function updateLeaderboardRow(row, driver, index, pitStops) {
+  const parts = row._parts;
+  if (!parts) return;
+
+  const color = driver.color || TEAM_COLORS[driver.team] || '#444';
+  const driverCode = normalizeDriverCode(driver.code) || '---';
+  const posClass = index === 0 ? 'p1' : index === 1 ? 'p2' : index === 2 ? 'p3' : '';
+  const gapTxt = index === 0 ? 'LEADER' : (driver.gap || '—');
+  const tyre = driver.tyre && driver.tyre !== '—' ? String(driver.tyre).trim().toUpperCase() : '';
+  const tyreClass = tyre.replace(/[^A-Z0-9_-]/g, '');
+  const photoUrl = getDriverPhotoUrl(driver);
+  const fallbackChar = (driverCode.replace(/[^A-Z0-9]/g, '').charAt(0) || '?');
+
+  parts.posNum.className = `lb-pos-num ${posClass}`.trim();
+  parts.posNum.textContent = driver.pos;
+
+  parts.photoWrap.dataset.fallback = fallbackChar;
+  parts.photoWrap.style.setProperty('--driver-color', color);
+  if (photoUrl && parts.photoImg.dataset.src !== photoUrl) {
+    parts.photoImg.src = photoUrl;
+    parts.photoImg.dataset.src = photoUrl;
+    parts.photoImg.style.display = 'block';
+  } else if (!photoUrl) {
+    parts.photoImg.removeAttribute('src');
+    delete parts.photoImg.dataset.src;
+    parts.photoImg.style.display = 'none';
+  }
+  parts.photoImg.alt = driverCode;
+  parts.photoImg.onerror = () => { parts.photoImg.style.display = 'none'; };
+
+  parts.colorBar.style.background = color;
+  parts.code.textContent = driverCode;
+  parts.team.textContent = driver.team || '—';
+
+  if (tyreClass) {
+    parts.tyre.className = `lb-tyre tire-badge tire-${tyreClass}`;
+    parts.tyre.textContent = tyre;
+    parts.tyre.title = `Current tyre: ${tyre}`;
+  } else {
+    parts.tyre.className = 'lb-tyre lb-tyre-unknown';
+    parts.tyre.textContent = '—';
+    parts.tyre.title = 'Current tyre unavailable';
+  }
+
+  parts.gap.textContent = gapTxt;
+  parts.gap.classList.toggle('gap-0', index === 0);
+
+  parts.pits.textContent = pitStops;
+  parts.pits.classList.toggle('has-pits', pitStops > 0);
+}
+
+function detectAdjacentSwap(prevOrder, nextOrder) {
+  if (!Array.isArray(prevOrder) || !Array.isArray(nextOrder)) return null;
+  if (prevOrder.length !== nextOrder.length || prevOrder.length < 2) return null;
+
+  const diffs = [];
+  for (let i = 0; i < nextOrder.length; i++) {
+    if (prevOrder[i] !== nextOrder[i]) diffs.push(i);
+    if (diffs.length > 2) return null;
+  }
+
+  if (diffs.length !== 2) return null;
+  const [a, b] = diffs;
+  if (b !== a + 1) return null;
+  if (prevOrder[a] !== nextOrder[b] || prevOrder[b] !== nextOrder[a]) return null;
+
+  return {
+    indexA: a,
+    indexB: b,
+    upCode: nextOrder[a],
+    downCode: nextOrder[b],
+    codes: [nextOrder[a], nextOrder[b]],
+  };
+}
+
+function runLeaderboardFlipAnimation(container, orderedCodes, targetCodes = null) {
+  const oldTops = new Map();
+  Array.from(container.children).forEach(row => {
+    if (row.dataset.code) oldTops.set(row.dataset.code, row.getBoundingClientRect().top);
+  });
+
+  const flipToken = ++leaderboardFlipToken;
+  const animateCodes = Array.isArray(targetCodes) && targetCodes.length ? targetCodes : orderedCodes;
+  requestAnimationFrame(() => {
+    if (flipToken !== leaderboardFlipToken) return;
+    animateCodes.forEach(code => {
+      const row = leaderboardRowCache.get(code);
+      if (!row || !oldTops.has(code)) return;
+      const deltaY = oldTops.get(code) - row.getBoundingClientRect().top;
+      if (Math.abs(deltaY) < 1) return;
+
+      row.style.transition = 'transform 0s';
+      row.style.transform = `translateY(${deltaY}px)`;
+      row.getBoundingClientRect();
+      row.style.transition = 'transform 360ms cubic-bezier(0.22, 1, 0.36, 1)';
+      row.style.transform = 'translateY(0)';
+      setTimeout(() => {
+        if (!row.isConnected) return;
+        row.style.transition = '';
+      }, 380);
+    });
+  });
+}
+
 function renderLeaderboardRows(drivers, opts = {}) {
   const container = document.getElementById('leaderboardRows');
   if (!container) return;
 
   const animate = !!opts.animate;
+  const isLive = !!opts.live;
+  const displayLap = Number(opts.displayLap) || 0;
   const maxLap = opts.uptoLap;
   const pitCounts = getPitStopCountsByDriver(maxLap);
-  container.innerHTML = '';
+  const allowPositionFx = isLive && displayLap > 2;
+  const orderedCodes = drivers.map(d => normalizeDriverCode(d.code) || '---');
+  const nextSignature = orderedCodes.join('|');
+  const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  let swapToAnimate = null;
 
+  if (allowPositionFx) {
+    const detectedSwap = detectAdjacentSwap(leaderboardPrevOrderCodes, orderedCodes);
+    if (detectedSwap) {
+      const key = `${detectedSwap.indexA}:${detectedSwap.upCode}:${detectedSwap.downCode}`;
+      const globalCooldownOk = (nowMs - leaderboardLastAnimatedSwapAt) > 420;
+      const sameSwapCooldownOk = key !== leaderboardLastAnimatedSwapKey || (nowMs - leaderboardLastAnimatedSwapAt) > 900;
+      if (globalCooldownOk && sameSwapCooldownOk) {
+        swapToAnimate = detectedSwap;
+        leaderboardLastAnimatedSwapKey = key;
+        leaderboardLastAnimatedSwapAt = nowMs;
+      }
+    }
+  }
+
+  if (swapToAnimate) {
+    runLeaderboardFlipAnimation(container, orderedCodes, swapToAnimate.codes);
+  }
+
+  const seen = new Set();
   drivers.forEach((d, i) => {
-    const color = d.color || TEAM_COLORS[d.team] || '#444';
-    const posClass = i === 0 ? 'p1' : i === 1 ? 'p2' : i === 2 ? 'p3' : '';
-    const tyre = d.tyre && d.tyre !== '—' ? d.tyre : '';
-    const tyreHtml = tyre
-      ? `<span class="tire-badge tire-${escapeHtml(tyre)}" title="Current tyre: ${escapeHtml(tyre)}">${escapeHtml(tyre)}</span>`
-      : '<span class="lb-tyre-unknown" title="Current tyre unavailable">—</span>';
-    const gapTxt = i === 0 ? 'LEADER' : (d.gap || '—');
     const driverCode = normalizeDriverCode(d.code) || '---';
-    const teamName = d.team || '';
-    const photoUrl = getDriverPhotoUrl(d);
-    const pitStops = pitCounts[driverCode] || 0;
-    const fallbackChar = (driverCode.replace(/[^A-Z0-9]/g, '').charAt(0) || '?');
+    let row = leaderboardRowCache.get(driverCode);
+    const isNewRow = !row;
+    if (!row) {
+      row = createLeaderboardRow(driverCode);
+      leaderboardRowCache.set(driverCode, row);
+      if (animate) {
+        row.classList.add('fade-in');
+        row.style.animationDelay = `${i * 0.04}s`;
+      }
+    }
 
-    const row = document.createElement('div');
-    row.className = animate ? 'lb-row fade-in' : 'lb-row';
-    if (animate) row.style.animationDelay = `${i * 0.04}s`;
-    row.innerHTML = `
-      <span class="lb-pos-num ${posClass}">${d.pos}</span>
-      <div class="lb-driver-photo" style="--driver-color:${color}" data-fallback="${fallbackChar}">
-        ${photoUrl
-          ? `<img class="lb-driver-photo-img" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(driverCode)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">`
-          : ''}
-      </div>
-      <div class="lb-driver-info">
-        <div class="lb-driver-line">
-          <div class="lb-color" style="background:${color}"></div>
-          <span class="lb-driver-code">${escapeHtml(driverCode)}</span>
-          ${tyreHtml}
-        </div>
-        <div class="lb-team">${escapeHtml(teamName)}</div>
-      </div>
-      <span class="lb-gap-col ${i===0?'gap-0':''}">${escapeHtml(gapTxt)}</span>
-      <span class="lb-pit-count ${pitStops > 0 ? 'has-pits' : ''}" title="Pit stops">${pitStops}</span>
-    `;
+    updateLeaderboardRow(row, d, i, pitCounts[driverCode] || 0);
     container.appendChild(row);
+    seen.add(driverCode);
   });
+
+  if (swapToAnimate) {
+    const upRow = leaderboardRowCache.get(swapToAnimate.upCode);
+    const downRow = leaderboardRowCache.get(swapToAnimate.downCode);
+    applyPositionChangeIndicator(swapToAnimate.upCode, upRow, 1);
+    applyPositionChangeIndicator(swapToAnimate.downCode, downRow, -1);
+  }
+
+  Array.from(leaderboardRowCache.entries()).forEach(([code, row]) => {
+    if (seen.has(code)) return;
+    clearPositionChangeIndicator(code, row);
+    row.remove();
+    leaderboardRowCache.delete(code);
+  });
+
+  orderedCodes.forEach((code, idx) => { leaderboardPrevPosByCode[code] = idx + 1; });
+  Array.from(Object.keys(leaderboardPrevPosByCode)).forEach(code => {
+    if (!seen.has(code)) delete leaderboardPrevPosByCode[code];
+  });
+
+  leaderboardPrevOrderCodes = orderedCodes.slice();
+  leaderboardLastOrderSignature = nextSignature;
 }
 
 function renderPitStops() {
@@ -503,38 +727,40 @@ function setActiveLapChip(lapNumber) {
   }
 }
 
+function safeRenderTimingTower(drivers) {
+  try {
+    renderTimingTower(drivers);
+  } catch (err) {
+    console.error('Timing tower render failed:', err);
+  }
+}
+
 function renderTimingTower(drivers) {
   const container = document.getElementById('tvTimingRows');
   if (!container || !raceData) return;
   drivers = drivers || raceData.drivers || [];
+  const spriteMap = (typeof TEAM_SPRITE_PATHS !== 'undefined' && TEAM_SPRITE_PATHS) ? TEAM_SPRITE_PATHS : {};
 
-  const TEAM_CLR = {
-    'Red Bull Racing':'#3671C6','Red Bull':'#3671C6',
-    'Ferrari':'#E8002D','Mercedes':'#00D2BE','McLaren':'#FF8000',
-    'Aston Martin':'#229971','Alpine':'#0093CC','Williams':'#64C4FF',
-    'RB':'#6692FF','Racing Bulls':'#6692FF',
-    'Kick Sauber':'#52E252','Sauber':'#52E252',
-    'Haas F1 Team':'#B6BABD','Haas':'#B6BABD',
-  };
-  const TYRE_CLR = { S:'#cc0020', M:'#cc9900', H:'#aaaaaa', I:'#006622', W:'#0055cc', '—':'#444' };
+  container.innerHTML = drivers.slice(0, 20).map((d, i) => {
+    const gapRaw = String(d.gap || '').trim();
+    const isOut = /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw) || /RETIRED/i.test(gapRaw);
+    const rowClass = `${i === 0 ? 'tt-leader' : ''} ${isOut ? 'tt-out' : ''}`.trim();
+    const gapLabel = i === 0 ? 'Leader' : (isOut ? 'Out' : (gapRaw || '—'));
 
-  container.innerHTML = drivers.slice(0, 15).map((d, i) => {
-    const posClass = i === 0 ? 'ldr' : i === 1 ? 'p2' : i === 2 ? 'p3' : '';
-    const rowClass = i === 0 ? 'tt-leader' : i === 1 ? 'tt-p2' : i === 2 ? 'tt-p3' : '';
-    const gap = i === 0
-      ? '<span class="tt-gap leader-gap">LEADER</span>'
-      : (d.gap === 'DNF' || d.gap === 'DNS')
-        ? `<span class="tt-gap" style="color:#555">${d.gap}</span>`
-        : `<span class="tt-gap">${d.gap || '—'}</span>`;
-    const tyre = d.tyre || '—';
-    const teamColor = d.color || TEAM_CLR[d.team] || '#444';
+    const code = normalizeDriverCode(d.code) || '---';
+    const teamPath = spriteMap[d.team]
+      || (typeof teamSlug === 'function' ? `assets/sprites/cars/teams/${teamSlug(d.team)}.png` : '')
+      || '';
+
     return `
       <div class="tt-row ${rowClass}">
-        <span class="tt-pos ${posClass}">${d.pos}</span>
-        <div class="tt-teambar" style="background:${teamColor}"></div>
-        <span class="tt-driver">${d.code}</span>
-        ${gap}
-        <div class="tt-tyre"><div class="tt-tyre-dot" style="background:${TYRE_CLR[tyre]||'#444'}" title="${tyre}"></div></div>
+        <span class="tt-pos">${d.pos}</span>
+        <span class="tt-team-logo">
+          ${teamPath ? `<img src="${teamPath}" alt="${d.team || ''}" loading="lazy" onerror="this.style.display='none'">` : ''}
+        </span>
+        <span class="tt-driver">${code}</span>
+        <span class="tt-gap ${i===0?'leader-gap':''} ${isOut?'out-gap':''}">${gapLabel}</span>
+        <span class="tt-ind"></span>
       </div>`;
   }).join('');
 }
@@ -2182,8 +2408,10 @@ function updatePlayback(lap) {
   // TV lap counter
   const tvCur = document.getElementById('tvLapCurrent');
   const tvReadout = document.getElementById('tvLapReadout');
+  const tvTowerLap = document.getElementById('tvTowerLap');
   if (tvCur) tvCur.textContent = displayLap;
   if (tvReadout) tvReadout.textContent = `LAPS ${displayLap} / ${totalLaps}`;
+  if (tvTowerLap) tvTowerLap.textContent = `LAP ${displayLap} / ${totalLaps}`;
 
   // Race clock — use real replayTime if available, else estimate
   let elapsed;
@@ -2208,7 +2436,7 @@ function updatePlayback(lap) {
 
   // Update timing tower and ORDER tab with live standings
   const standings = getLiveStandings(Math.max(1, displayLap));
-  renderTimingTower(standings);
+  safeRenderTimingTower(standings);
   renderLiveLeaderboard(standings, displayLap);
 
   // Sync tyre on canvas car objects
@@ -2222,7 +2450,11 @@ function updatePlayback(lap) {
 
 // ── Live leaderboard — updates ORDER tab during playback ──────────
 function renderLiveLeaderboard(standings, displayLap) {
-  renderLeaderboardRows(standings || [], { uptoLap: displayLap });
+  renderLeaderboardRows(standings || [], {
+    uptoLap: displayLap,
+    displayLap,
+    live: true
+  });
 }
 
 let userSpeedMult = 1.0; // user-controlled multiplier on top of auto replaySpeed
