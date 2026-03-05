@@ -16,6 +16,12 @@ let leaderboardLastAnimatedSwapKey = '';
 let leaderboardLastAnimatedSwapAt = 0;
 const leaderboardRowCache = new Map();
 const leaderboardChangeTimers = new Map();
+const liveTrackProgressState = new Map();
+let liveTrackDirection = 0;
+let liveTrackLastReplayTime = null;
+let liveTrackDirectionScore = 0;
+let liveStandingsPrevOrderCodes = [];
+const liveLapCorrectionByCode = new Map();
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
@@ -267,6 +273,16 @@ function resetLeaderboardState() {
 
   leaderboardRowCache.forEach(row => row.remove());
   leaderboardRowCache.clear();
+  resetLiveTrackProgressState();
+}
+
+function resetLiveTrackProgressState() {
+  liveTrackProgressState.clear();
+  liveTrackDirection = 0;
+  liveTrackLastReplayTime = null;
+  liveTrackDirectionScore = 0;
+  liveStandingsPrevOrderCodes = [];
+  liveLapCorrectionByCode.clear();
 }
 
 function normalizeDriverCode(code) {
@@ -1659,6 +1675,7 @@ function spawnCars() {
   const fitted = fitPathToViewport(rawTrackPath, canvasW, canvasH, TRACK_EDGE_PADDING_CSS * dpr);
   trackPath = fitted.path;
   trackViewportTransform = fitted.transform;
+  resetLiveTrackProgressState();
 
   trackNormals = buildNormals(trackPath);
   preRendered  = buildOffscreenTrack(canvasW, canvasH);
@@ -2336,7 +2353,154 @@ function getCurrentTyre(driverCode, lap) {
 
 // ── Get car track progress (0-1) at current replayTime ───────────
 // Uses frame data to find nearest trackPath point
-function getCarTrackProgress(code) {
+function normalizeProgressDelta(delta) {
+  let out = delta;
+  if (out > 0.5) out -= 1;
+  if (out < -0.5) out += 1;
+  return out;
+}
+
+function wrappedTrackIndexForStandings(idx, size) {
+  if (!size) return 0;
+  return ((idx % size) + size) % size;
+}
+
+function findNearestTrackIndexForStandings(px, py, hintIdx = null, hintWindow = null, allowGlobalFallback = true) {
+  const N = trackPath.length;
+  if (!N) return null;
+
+  let bestIdx = 0;
+  let bestDist = Infinity;
+
+  if (Number.isFinite(hintIdx)) {
+    const center = wrappedTrackIndexForStandings(Math.round(hintIdx), N);
+    const halfWindow = Math.max(
+      10,
+      Math.min(
+        Math.floor(N * 0.08),
+        Math.floor(Number.isFinite(hintWindow) ? hintWindow : (N * 0.03))
+      )
+    );
+    for (let o = -halfWindow; o <= halfWindow; o++) {
+      const i = wrappedTrackIndexForStandings(center + o, N);
+      const [tx, ty] = trackPath[i];
+      const d = (px - tx) ** 2 + (py - ty) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+
+    // If local match is close enough, keep continuity and skip global snap.
+    if (bestDist < 2600) {
+      return bestIdx;
+    }
+    if (!allowGlobalFallback) {
+      return bestIdx;
+    }
+  }
+
+  for (let i = 0; i < N; i += 4) {
+    const [tx, ty] = trackPath[i];
+    const d = (px - tx) ** 2 + (py - ty) ** 2;
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+
+  const refineSpan = 8;
+  for (let o = -refineSpan; o <= refineSpan; o++) {
+    const i = wrappedTrackIndexForStandings(bestIdx + o, N);
+    const [tx, ty] = trackPath[i];
+    const d = (px - tx) ** 2 + (py - ty) ** 2;
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+
+  return bestIdx;
+}
+
+function alignCircularOrderToReference(items, referenceCodes) {
+  const list = Array.isArray(items) ? items.slice() : [];
+  if (!list.length || !Array.isArray(referenceCodes) || !referenceCodes.length) {
+    return { items: list, cost: 0 };
+  }
+
+  const refIndex = new Map();
+  referenceCodes.forEach((code, idx) => {
+    const key = normalizeDriverCode(code);
+    if (key) refIndex.set(key, idx);
+  });
+  if (!refIndex.size) return { items: list, cost: 0 };
+
+  let bestOffset = 0;
+  let bestCost = Infinity;
+  const n = list.length;
+
+  for (let offset = 0; offset < n; offset++) {
+    let cost = 0;
+    let matches = 0;
+    for (let i = 0; i < n; i++) {
+      const code = normalizeDriverCode(list[(i + offset) % n]?.code);
+      if (!refIndex.has(code)) continue;
+      cost += Math.abs(i - refIndex.get(code));
+      matches++;
+    }
+    if (!matches) continue;
+    const normCost = cost / matches;
+    if (normCost < bestCost) {
+      bestCost = normCost;
+      bestOffset = offset;
+    }
+  }
+
+  const rotated = list.slice(bestOffset).concat(list.slice(0, bestOffset));
+  return { items: rotated, cost: Number.isFinite(bestCost) ? bestCost : 0 };
+}
+
+function findLeaderCutFromScoreGap(items, direction) {
+  if (!Array.isArray(items) || items.length < 8 || !direction) return -1;
+
+  let bestGap = 0;
+  let bestCut = -1;
+  const n = items.length;
+
+  for (let i = 0; i < n - 1; i++) {
+    const a = Number(items[i]?.scoreRaw) * direction;
+    const b = Number(items[i + 1]?.scoreRaw) * direction;
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+
+    const gap = a - b;
+    const frontCount = i + 1;
+    const backCount = n - frontCount;
+
+    // Ignore edges; we only want cuts that split meaningful groups.
+    if (frontCount < 3 || backCount < 6) continue;
+    if (gap > bestGap) {
+      bestGap = gap;
+      bestCut = i;
+    }
+  }
+
+  // Big circular jump indicates some drivers are offset by roughly one lap.
+  // In that case, rotate so the largest pack starts at P1.
+  return bestGap >= 0.33 ? bestCut : -1;
+}
+
+function computeMedianNumber(values) {
+  const nums = (Array.isArray(values) ? values : [])
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v))
+    .sort((a, b) => a - b);
+  if (!nums.length) return 0;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+}
+
+function getCarTrackProgress(code, opts = {}) {
   if (!replayFrames.length || !trackPath.length) return null;
   const fi = Math.min(Math.floor(replayTime), replayFrames.length - 1);
   const pos = replayFrames[fi]?.cars?.[code];
@@ -2344,14 +2508,17 @@ function getCarTrackProgress(code) {
   const canvas = document.getElementById('trackCanvas');
   const W = canvas?.width || 800, H = canvas?.height || 600;
   const [px, py] = realPosToCanvas(pos.x, pos.y, W, H);
+  const state = liveTrackProgressState.get(normalizeDriverCode(code));
+  const bestIdx = findNearestTrackIndexForStandings(
+    px,
+    py,
+    state?.pathIdx ?? null,
+    opts.hintWindow,
+    opts.allowGlobalFallback !== false
+  );
+  if (bestIdx === null) return null;
   const N = trackPath.length;
-  let bestIdx = 0, bestDist = Infinity;
-  for (let i = 0; i < N; i += 3) {
-    const [tx,ty] = trackPath[i];
-    const d = (px-tx)**2 + (py-ty)**2;
-    if (d < bestDist) { bestDist = d; bestIdx = i; }
-  }
-  return bestIdx / N;
+  return { progress: bestIdx / N, pathIdx: bestIdx };
 }
 
 // ── Compute live standings from frame data ────────────────────────
@@ -2368,30 +2535,162 @@ function getLiveStandings(lap) {
     return withTyre;
   }
 
+  if (liveTrackLastReplayTime !== null) {
+    const dtReplay = replayTime - liveTrackLastReplayTime;
+    if (dtReplay < -0.5 || dtReplay > 5) {
+      resetLiveTrackProgressState();
+    }
+  }
+  const dtReplay = liveTrackLastReplayTime === null ? 0.5 : Math.max(0.05, replayTime - liveTrackLastReplayTime);
+  liveTrackLastReplayTime = replayTime;
+
+  const maxT = replayFrames[replayFrames.length - 1]?.t || 1;
+  const avgLapsPerSec = Math.max(0.001, (totalLaps || 1) / Math.max(maxT, 1));
+  const avgIdxMove = avgLapsPerSec * dtReplay * Math.max(trackPath.length, 1);
+  const hintWindow = Math.max(14, Math.min(68, Math.ceil(avgIdxMove * 4 + 10)));
+  const maxDeltaAllowed = Math.max(0.02, Math.min(0.2, (hintWindow / Math.max(trackPath.length, 1)) * 1.1));
+
   // Build live position order from track progress
   const progress = [];
+  let directionVote = 0;
   withTyre.forEach(d => {
-    const p = getCarTrackProgress(d.code);
-    if (p !== null) progress.push({ driver: d, progress: p });
+    const code = normalizeDriverCode(d.code);
+    const prev = liveTrackProgressState.get(code);
+    const sample = getCarTrackProgress(code, {
+      hintWindow,
+      allowGlobalFallback: !prev
+    });
+    if (!sample) return;
+
+    const rawProgress = sample.progress;
+    let unwrappedProgress = rawProgress;
+
+    if (prev && Number.isFinite(prev.rawProgress) && Number.isFinite(prev.unwrappedProgress)) {
+      let delta = normalizeProgressDelta(rawProgress - prev.rawProgress);
+      // Reject implausible jumps from temporary projection misses.
+      if (Math.abs(delta) > maxDeltaAllowed) delta = 0;
+      unwrappedProgress = prev.unwrappedProgress + delta;
+      if (Math.abs(delta) > 1e-4) {
+        directionVote += Math.sign(delta) * Math.abs(delta);
+      }
+    }
+
+    liveTrackProgressState.set(code, {
+      rawProgress,
+      unwrappedProgress,
+      pathIdx: sample.pathIdx
+    });
+
+    progress.push({ driver: d, code, scoreRaw: unwrappedProgress });
   });
 
   if (progress.length < 2) return withTyre; // not enough data yet
 
-  // Sort descending — higher progress = further ahead on track
-  progress.sort((a, b) => b.progress - a.progress);
+  const referenceCodes = liveStandingsPrevOrderCodes.length
+    ? liveStandingsPrevOrderCodes.slice()
+    : [];
 
-  const leaderProgress = progress[0].progress;
+  const plusSource = [...progress].sort((a, b) => b.scoreRaw - a.scoreRaw);
+  const minusSource = [...progress].sort((a, b) => a.scoreRaw - b.scoreRaw);
+  const plusAligned = referenceCodes.length
+    ? alignCircularOrderToReference(plusSource, referenceCodes)
+    : { items: plusSource, cost: 0 };
+  const minusAligned = referenceCodes.length
+    ? alignCircularOrderToReference(minusSource, referenceCodes)
+    : { items: minusSource, cost: 0 };
 
-  return progress.map((item, i) => {
+  const normalizedVote = directionVote / Math.max(progress.length, 1);
+  if (Math.abs(normalizedVote) > 1e-4) {
+    liveTrackDirectionScore = (liveTrackDirectionScore * 0.82) + (normalizedVote * 0.18);
+  } else {
+    liveTrackDirectionScore *= 0.94;
+  }
+
+  const voteDir = Math.abs(liveTrackDirectionScore) > 0.0015
+    ? (liveTrackDirectionScore >= 0 ? 1 : -1)
+    : 0;
+  const memoryPenaltyPlus = liveTrackDirection === -1 ? 0.08 : 0;
+  const memoryPenaltyMinus = liveTrackDirection === 1 ? 0.08 : 0;
+  const votePenaltyPlus = voteDir === -1 ? 0.2 : 0;
+  const votePenaltyMinus = voteDir === 1 ? 0.2 : 0;
+
+  const plusScore = plusAligned.cost + memoryPenaltyPlus + votePenaltyPlus;
+  const minusScore = minusAligned.cost + memoryPenaltyMinus + votePenaltyMinus;
+
+  let usePlus;
+  if (!referenceCodes.length && voteDir === 0) {
+    // First frames can have low confidence; pick a stable default until movement votes arrive.
+    usePlus = liveTrackDirection !== -1;
+  } else {
+    usePlus = plusScore <= minusScore;
+  }
+
+  liveTrackDirection = usePlus ? 1 : -1;
+  liveTrackDirectionScore = (liveTrackDirectionScore * 0.88) + (liveTrackDirection * 0.12);
+
+  const baseScores = progress.map(item => item.scoreRaw * liveTrackDirection);
+  const medianScore = computeMedianNumber(baseScores);
+  const correctionBand = 0.55;
+
+  // Bootstrap/repair integer lap-offset corrections. Some drivers can have
+  // telemetry that starts later, which creates a persistent +1/-1 lap shift.
+  progress.forEach(item => {
+    const code = item.code;
+    const rawScore = item.scoreRaw * liveTrackDirection;
+    let corr = Number(liveLapCorrectionByCode.get(code) || 0);
+
+    // If this driver has no correction yet (or drifted too far), snap to the
+    // nearest integer offset around the current pack median.
+    if (!liveLapCorrectionByCode.has(code) || (rawScore + corr > medianScore + 0.95) || (rawScore + corr < medianScore - 0.95)) {
+      corr = 0;
+      while (rawScore + corr > medianScore + correctionBand) corr -= 1;
+      while (rawScore + corr < medianScore - correctionBand) corr += 1;
+      liveLapCorrectionByCode.set(code, corr);
+    }
+  });
+
+  // Final leaderboard order should follow corrected live telemetry score directly.
+  // This avoids circular alignment artifacts that can keep a driver in the wrong
+  // half of the table (for example LEC not dropping near the tail when visually there).
+  const prevIndex = new Map();
+  liveStandingsPrevOrderCodes.forEach((code, idx) => prevIndex.set(code, idx));
+
+  const ordered = progress.map((item) => {
+    const corr = Number(liveLapCorrectionByCode.get(item.code) || 0);
+    return {
+      ...item,
+      score: (item.scoreRaw * liveTrackDirection) + corr
+    };
+  }).sort((a, b) => {
+    const d = b.score - a.score;
+    if (Math.abs(d) > 1e-9) return d;
+    const ia = prevIndex.has(a.code) ? prevIndex.get(a.code) : Number.MAX_SAFE_INTEGER;
+    const ib = prevIndex.has(b.code) ? prevIndex.get(b.code) : Number.MAX_SAFE_INTEGER;
+    return ia - ib;
+  });
+
+  liveStandingsPrevOrderCodes = ordered.map(item => item.code);
+
+  const leaderScore = ordered[0].score;
+
+  return ordered.map((item, i) => {
     const d = item.driver;
     let gap;
     if (i === 0) {
       gap = 'LEADER';
     } else {
-      const fracBehind = leaderProgress - item.progress;
+      const fracBehind = Math.max(0, leaderScore - item.score);
       // 1 full lap ≈ 70–100s in F1; use 85s as a reasonable average
       const secsBehind = fracBehind * 85;
-      gap = secsBehind > 75 ? (d.gap || 'LAP') : `+${secsBehind.toFixed(1)}s`;
+      // Mark as lapped only when the model indicates at least ~1 full lap behind.
+      // This avoids false "LAPPED" labels early in the race.
+      const lapThreshold = 1.05;
+      if (fracBehind >= lapThreshold) {
+        const wholeLaps = Math.max(1, Math.floor(fracBehind + 0.02));
+        gap = wholeLaps === 1 ? '+1 LAP' : `+${wholeLaps} LAPS`;
+      } else {
+        gap = `+${secsBehind.toFixed(1)}s`;
+      }
     }
     return { ...d, pos: i + 1, gap };
   });
@@ -2474,7 +2773,10 @@ function togglePlay() {
 }
 
 function startPlay() {
-  if (usingRealData && replayTime >= (replayFrames[replayFrames.length-1]?.t || 0)) replayTime = 0;
+  if (usingRealData && replayTime >= (replayFrames[replayFrames.length-1]?.t || 0)) {
+    replayTime = 0;
+    resetLiveTrackProgressState();
+  }
   if (!usingRealData && currentLap >= totalLaps) currentLap = 0;
 
   isPlaying = true;
@@ -2523,6 +2825,7 @@ function seekToLap(lap) {
   if (usingRealData && replayFrames.length) {
     const maxT = replayFrames[replayFrames.length - 1].t;
     replayTime = (lap / Math.max(totalLaps, 1)) * maxT;
+    resetLiveTrackProgressState();
   }
   updatePlayback(lap);
 }
