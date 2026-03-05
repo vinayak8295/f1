@@ -817,7 +817,7 @@ let DRS_ZONES = [{ start:0.88, end:0.05 }, { start:0.52, end:0.62 }];
 const TRACK_EDGE_PADDING_CSS = 58; // Smaller padding so the track occupies more viewport area.
 const TRACK_WIDTH_MULT = 1.48;     // Wider visual track for better racing room.
 const CAR_VISUAL_SCALE = 1.2;      // Larger cars while preserving proportions.
-const CAR_GAP_MULT = 3.8;          // Front/back spacing multiplier (recommended: 1.0–5.0).
+const CAR_GAP_MULT = 4.8;          // Front/back spacing multiplier (recommended: 1.0–8.0).
 const CAR_LENGTH_SCALE = 0.88;     // <1 makes cars visually shorter length-wise.
 const CAR_BRIGHTNESS = 1.18;       // Global brightness boost for car visibility.
 
