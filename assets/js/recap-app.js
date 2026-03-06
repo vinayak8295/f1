@@ -13,6 +13,9 @@ let timingBaselinePosByCode = {};
 let leaderboardPrevPosByCode = {};
 let leaderboardLastOrderSignature = '';
 let leaderboardPrevOrderCodes = [];
+let trackBattlePrevOrderCodes = [];
+let trackOvertakeEffects = [];
+let trackLastOvertakeFxAt = 0;
 let leaderboardFlipToken = 0;
 let leaderboardLastAnimatedSwapKey = '';
 let leaderboardLastAnimatedSwapAt = 0;
@@ -282,6 +285,9 @@ function resetLeaderboardState() {
   leaderboardPrevPosByCode = {};
   leaderboardLastOrderSignature = '';
   leaderboardPrevOrderCodes = [];
+  trackBattlePrevOrderCodes = [];
+  trackOvertakeEffects = [];
+  trackLastOvertakeFxAt = 0;
   leaderboardFlipToken++;
   leaderboardLastAnimatedSwapKey = '';
   leaderboardLastAnimatedSwapAt = 0;
@@ -520,6 +526,27 @@ function detectAdjacentSwap(prevOrder, nextOrder) {
     downCode: nextOrder[b],
     codes: [nextOrder[a], nextOrder[b]],
   };
+}
+
+function updateTrackBattleEffects(standings) {
+  const orderedCodes = (Array.isArray(standings) ? standings : [])
+    .map(d => normalizeDriverCode(d?.code) || '---');
+  const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+
+  trackOvertakeEffects = trackOvertakeEffects.filter(fx => (fx?.expiresAt || 0) > nowMs);
+
+  const swap = detectAdjacentSwap(trackBattlePrevOrderCodes, orderedCodes);
+  if (swap && (nowMs - trackLastOvertakeFxAt) > 550) {
+    trackOvertakeEffects.push({
+      upCode: swap.upCode,
+      downCode: swap.downCode,
+      startedAt: nowMs,
+      expiresAt: nowMs + 1650,
+    });
+    trackLastOvertakeFxAt = nowMs;
+  }
+
+  trackBattlePrevOrderCodes = orderedCodes;
 }
 
 function runLeaderboardFlipAnimation(container, orderedCodes, targetCodes = null) {
@@ -2658,6 +2685,119 @@ function applyOvertakeLaneOffsets(cars, dt) {
   });
 }
 
+function getDisplayedCarPose(car) {
+  if (!car) return null;
+  return {
+    x: car._pitRender?.x ?? car.renderX,
+    y: car._pitRender?.y ?? car.renderY,
+    angle: car._pitRender?.angle ?? car.angle ?? 0,
+  };
+}
+
+function drawTrackBattleEffects(ctx, cars) {
+  const carList = Array.isArray(cars) ? cars : [];
+  if (!carList.length) return;
+
+  const poseByCode = new Map();
+  carList.forEach(car => {
+    const code = normalizeDriverCode(car.code);
+    const pose = getDisplayedCarPose(car);
+    if (!code || !pose || !Number.isFinite(pose.x) || !Number.isFinite(pose.y)) return;
+    poseByCode.set(code, { ...pose, color: car.color, pos: car.pos, pit: !!car._pitState });
+  });
+
+  const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  trackOvertakeEffects = trackOvertakeEffects.filter(fx => (fx?.expiresAt || 0) > nowMs);
+
+  // Continuous close-battle glow for adjacent cars.
+  const sorted = [...carList].sort((a, b) => (a.pos || 999) - (b.pos || 999));
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const ahead = sorted[i];
+    const behind = sorted[i + 1];
+    if ((behind.pos || 999) - (ahead.pos || 999) !== 1) continue;
+    if (ahead._pitState || behind._pitState) continue;
+
+    const pA = getDisplayedCarPose(ahead);
+    const pB = getDisplayedCarPose(behind);
+    if (!pA || !pB) continue;
+
+    const dist = Math.hypot(pA.x - pB.x, pA.y - pB.y);
+    if (dist < 26 || dist > 88) continue;
+
+    const midX = (pA.x + pB.x) * 0.5;
+    const midY = (pA.y + pB.y) * 0.5;
+    const alpha = 1 - ((dist - 26) / 62);
+    const grad = ctx.createLinearGradient(pA.x, pA.y, pB.x, pB.y);
+    grad.addColorStop(0, hexAlpha(ahead.color, 0.12 * alpha));
+    grad.addColorStop(0.5, `rgba(160,235,255,${0.34 * alpha})`);
+    grad.addColorStop(1, hexAlpha(behind.color, 0.12 * alpha));
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.strokeStyle = grad;
+    ctx.shadowColor = `rgba(120,230,255,${0.38 * alpha})`;
+    ctx.shadowBlur = 10;
+    ctx.lineWidth = 4 + (alpha * 2);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pA.x, pA.y);
+    ctx.lineTo(midX, midY);
+    ctx.lineTo(pB.x, pB.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Strong pulse when an actual pass is detected.
+  trackOvertakeEffects.forEach((fx) => {
+    const up = poseByCode.get(fx.upCode);
+    const down = poseByCode.get(fx.downCode);
+    if (!up || !down) return;
+
+    const duration = Math.max(1, (fx.expiresAt || nowMs) - (fx.startedAt || nowMs));
+    const t = Math.max(0, Math.min(1, (nowMs - (fx.startedAt || nowMs)) / duration));
+    const alpha = (1 - t) * (1 - t);
+    const midX = (up.x + down.x) * 0.5;
+    const midY = (up.y + down.y) * 0.5 - 16;
+    const grad = ctx.createLinearGradient(up.x, up.y, down.x, down.y);
+    grad.addColorStop(0, hexAlpha(up.color, 0.56 * alpha));
+    grad.addColorStop(0.5, `rgba(255,245,190,${0.88 * alpha})`);
+    grad.addColorStop(1, hexAlpha(down.color, 0.42 * alpha));
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.strokeStyle = grad;
+    ctx.shadowColor = `rgba(255,230,150,${0.55 * alpha})`;
+    ctx.shadowBlur = 14;
+    ctx.lineWidth = 7 + (5 * alpha);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(up.x, up.y);
+    ctx.lineTo(down.x, down.y);
+    ctx.stroke();
+
+    ctx.lineWidth = 2.2;
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = `rgba(255,255,255,${0.62 * alpha})`;
+    ctx.beginPath();
+    ctx.arc(up.x, up.y, 10 + 8 * t, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(9,11,18,${0.90 * alpha})`;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(midX - 28, midY - 10, 56, 18, 4);
+      ctx.fill();
+    } else {
+      ctx.fillRect(midX - 28, midY - 10, 56, 18);
+    }
+    ctx.font = 'bold 8px "Orbitron",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(255,225,110,${0.96 * alpha})`;
+    ctx.fillText('OVERTAKE', midX, midY + 3);
+    ctx.restore();
+  });
+}
+
 
 // ── Main render loop ──
 function startRenderLoop(canvas) {
@@ -2815,6 +2955,8 @@ function startRenderLoop(canvas) {
         drawCar(ctx, px, py, pa, car, car.pos === 1);
       }
     });
+
+    drawTrackBattleEffects(ctx, trackCars);
 
     trackAnimFrame = requestAnimationFrame(frame);
   }
@@ -3256,6 +3398,7 @@ function updatePlayback(lap) {
 
   // Update timing tower and ORDER tab with live standings
   const standings = getLiveStandings(Math.max(1, displayLap));
+  updateTrackBattleEffects(standings);
   safeRenderTimingTower(standings);
   renderLiveLeaderboard(standings, displayLap);
 
