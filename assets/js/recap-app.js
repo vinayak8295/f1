@@ -6,8 +6,10 @@ let playTimer = null;
 let playbackSpeed = 3; // seconds per lap (fast recap = 3min / 71 laps ≈ 2.5s/lap)
 let totalLaps = 0;
 let shownEvents = new Set();
+let raceControlHideTimer = null;
 let activeLapChip = 0;
 let activeLapChipEl = null;
+let timingBaselinePosByCode = {};
 let leaderboardPrevPosByCode = {};
 let leaderboardLastOrderSignature = '';
 let leaderboardPrevOrderCodes = [];
@@ -192,6 +194,7 @@ function initRecap() {
   totalLaps = raceData.race.laps || 71;
   currentLap = 0;
   shownEvents = new Set();
+  if (raceControlHideTimer) { clearTimeout(raceControlHideTimer); raceControlHideTimer = null; }
   activeLapChip = 0;
   activeLapChipEl = null;
   resetLeaderboardState();
@@ -216,6 +219,19 @@ function initRecap() {
   if (tvReadout) tvReadout.textContent = `LAPS 0 / ${totalLaps}`;
   if (tvTowerLap) tvTowerLap.textContent = `LAP 0 / ${totalLaps}`;
   if (tvHud) tvHud.style.setProperty('--lap-progress-pct', '0');
+
+  // Race Control banner (top center)
+  const rcBar = document.getElementById('tvRaceControlBar');
+  const rcStrip = document.getElementById('tvEventStrip');
+  if (rcBar && rcStrip) {
+    rcBar.classList.add('active');
+    rcStrip.innerHTML = `
+      <span class="tv-rc-tag">RACE CONTROL</span>
+      <span class="tv-event-type incident">INCIDENT</span>
+      <span class="tv-event-msg">NO INCIDENTS REPORTED</span>
+      <span class="tv-event-lap">LAP 0</span>
+    `;
+  }
 
   // Show recap screen
   document.getElementById('idleScreen').style.display = 'none';
@@ -267,6 +283,7 @@ function resetLeaderboardState() {
   leaderboardFlipToken++;
   leaderboardLastAnimatedSwapKey = '';
   leaderboardLastAnimatedSwapAt = 0;
+  timingBaselinePosByCode = {};
 
   leaderboardChangeTimers.forEach(timer => clearTimeout(timer));
   leaderboardChangeTimers.clear();
@@ -287,6 +304,39 @@ function resetLiveTrackProgressState() {
 
 function normalizeDriverCode(code) {
   return String(code ?? '').trim().toUpperCase();
+}
+
+function formatRaceControlMessage(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s*[—–]\s*/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function showRaceControlEvent(e) {
+  const bar = document.getElementById('tvRaceControlBar');
+  const strip = document.getElementById('tvEventStrip');
+  if (!bar || !strip) return;
+
+  const typeRaw = String(e?.type || 'incident').toLowerCase();
+  const typeClass = (typeRaw === 'dnf') ? 'dnf' : 'incident';
+  const typeLabel = (typeRaw === 'dnf') ? 'RETIREMENT' : 'INCIDENT';
+  const msg = formatRaceControlMessage(e?.message) || 'INCIDENT NOTED';
+  const lap = Number.isFinite(Number(e?.lap)) ? Number(e.lap) : 0;
+
+  bar.classList.add('active');
+  strip.classList.remove('tv-event-anim');
+  strip.innerHTML = `
+    <span class="tv-rc-tag">RACE CONTROL</span>
+    <span class="tv-event-type ${typeClass}">${typeLabel}</span>
+    <span class="tv-event-msg">${msg}</span>
+    <span class="tv-event-lap">LAP ${lap}</span>
+  `;
+
+  // Restart the slide animation on update.
+  void strip.offsetWidth;
+  strip.classList.add('tv-event-anim');
 }
 
 function sanitizeDriverSlug(value) {
@@ -756,6 +806,7 @@ function renderTimingTower(drivers) {
   if (!container || !raceData) return;
   drivers = drivers || raceData.drivers || [];
   const spriteMap = (typeof TEAM_SPRITE_PATHS !== 'undefined' && TEAM_SPRITE_PATHS) ? TEAM_SPRITE_PATHS : {};
+  const nextBaseline = { ...timingBaselinePosByCode };
 
   container.innerHTML = drivers.slice(0, 20).map((d, i) => {
     const gapRaw = String(d.gap || '').trim();
@@ -764,6 +815,17 @@ function renderTimingTower(drivers) {
     const gapLabel = i === 0 ? 'Leader' : (isOut ? 'Out' : (gapRaw || '—'));
 
     const code = normalizeDriverCode(d.code) || '---';
+    const currPos = Number(d.pos);
+
+    if (code !== '---' && !(code in nextBaseline) && Number.isFinite(currPos) && currPos > 0 && isPlaying) {
+      // Baseline for "positions gained/lost": first stable order after the recap starts.
+      nextBaseline[code] = currPos;
+    }
+
+    const basePos = Number(nextBaseline[code]);
+    const delta = (Number.isFinite(currPos) && Number.isFinite(basePos) && basePos > 0) ? (basePos - currPos) : 0;
+    const indText = delta > 0 ? `▲${delta}` : (delta < 0 ? `▼${Math.abs(delta)}` : '');
+    const indClass = delta > 0 ? 'up' : (delta < 0 ? 'down' : '');
     const teamPath = spriteMap[d.team]
       || (typeof teamSlug === 'function' ? `assets/sprites/cars/teams/${teamSlug(d.team)}.png` : '')
       || '';
@@ -776,9 +838,11 @@ function renderTimingTower(drivers) {
         </span>
         <span class="tt-driver">${code}</span>
         <span class="tt-gap ${i===0?'leader-gap':''} ${isOut?'out-gap':''}">${gapLabel}</span>
-        <span class="tt-ind"></span>
+        <span class="tt-ind ${indClass}">${indText}</span>
       </div>`;
   }).join('');
+
+  timingBaselinePosByCode = nextBaseline;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -816,7 +880,7 @@ const SECTOR_SPLITS = [0.32, 0.65];
 let DRS_ZONES = [{ start:0.88, end:0.05 }, { start:0.52, end:0.62 }];
 const TRACK_EDGE_PADDING_CSS = 58; // Smaller padding so the track occupies more viewport area.
 const TRACK_WIDTH_MULT = 1.48;     // Wider visual track for better racing room.
-const CAR_VISUAL_SCALE = 1.2;      // Larger cars while preserving proportions.
+const CAR_VISUAL_SCALE = 1.3;      // Larger cars while preserving proportions.
 const CAR_GAP_MULT = 4.8;          // Front/back spacing multiplier (recommended: 1.0–8.0).
 const CAR_LENGTH_SCALE = 0.88;     // <1 makes cars visually shorter length-wise.
 const CAR_BRIGHTNESS = 1.18;       // Global brightness boost for car visibility.
@@ -1454,6 +1518,31 @@ function buildOffscreenTrack(W, H) {
     if (dash.length) ctx.setLineDash(dash);
     ctx.stroke(); ctx.setLineDash([]); ctx.restore();
   }
+  function strokeSegment(startIdx, endIdx, lw, style, dash=[], opts={}) {
+    const si = Math.max(0, Math.min(N - 1, startIdx|0));
+    const ei = Math.max(0, Math.min(N - 1, endIdx|0));
+    ctx.save();
+    ctx.beginPath();
+    let i = si;
+    for (let step = 0; step < N; step++) {
+      const [x, y] = pts[i];
+      step === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      if (i === ei) break;
+      i = (i + 1) % N;
+    }
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = style;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (dash.length) ctx.setLineDash(dash);
+    if (opts?.gco) ctx.globalCompositeOperation = opts.gco;
+    if (opts?.shadowColor) ctx.shadowColor = opts.shadowColor;
+    if (Number.isFinite(opts?.shadowBlur)) ctx.shadowBlur = opts.shadowBlur;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 
   // ── 1. Rich green environment ─────────────────────────────────────
   const bgGrad = ctx.createRadialGradient(W*0.5,H*0.45,0, W*0.5,H*0.5, Math.max(W,H)*0.75);
@@ -1520,6 +1609,21 @@ function buildOffscreenTrack(W, H) {
   strokeLayer(edgeHighlightW, 'rgba(255,255,255,0.05)');
   strokeLayer(edgeSealW, asp); // re-seal
 
+  // ── 8.5 Neon track outline for readability (YouTube) ─────────────
+  ctx.save(); tracePath();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.lineWidth = asphaltMainW * 1.14;
+  ctx.shadowColor = 'rgba(200,220,245,0.72)';
+  ctx.shadowBlur = 18 * trackW;
+  ctx.strokeStyle = 'rgba(180,195,220,0.14)';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = asphaltMainW * 1.06;
+  ctx.strokeStyle = 'rgba(220,235,255,0.08)';
+  ctx.stroke();
+  ctx.restore();
+
   // ── 9. Tyre rubber racing line (dark buildup on ideal line) ───────
   ctx.save(); tracePath();
   ctx.lineWidth = raceLineOuterW;
@@ -1529,6 +1633,24 @@ function buildOffscreenTrack(W, H) {
   ctx.lineWidth = raceLineInnerW;
   ctx.strokeStyle = 'rgba(40,34,26,0.45)';
   ctx.stroke(); ctx.restore();
+
+  // ── 9.5 Glowing racing line overlay (blue) ───────────────────────
+  ctx.save(); tracePath();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.lineWidth = raceLineOuterW * 1.6;
+  ctx.shadowColor = 'rgba(0,210,255,0.85)';
+  ctx.shadowBlur = 14 * trackW;
+  ctx.strokeStyle = 'rgba(0,170,255,0.16)';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = raceLineOuterW * 0.72;
+  ctx.strokeStyle = 'rgba(70,230,255,0.30)';
+  ctx.stroke();
+  ctx.lineWidth = raceLineInnerW * 1.15;
+  ctx.strokeStyle = 'rgba(220,255,255,0.32)';
+  ctx.stroke();
+  ctx.restore();
 
   // ── 10. DRS zones ─────────────────────────────────────────────────
   DRS_ZONES.forEach((zone, zi) => {
@@ -1544,13 +1666,24 @@ function buildOffscreenTrack(W, H) {
       const [x,y] = pts[idx];
       j===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
     });
-    ctx.lineWidth = drsGlowW;
-    // Animated-looking DRS glow
-    const drsGrad = ctx.createLinearGradient(0,0,W,H);
-    drsGrad.addColorStop(0,'rgba(0,200,255,0.15)');
-    drsGrad.addColorStop(1,'rgba(0,150,255,0.08)');
+    ctx.globalCompositeOperation = 'screen';
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    // Brighter DRS glow for legibility.
+    const drsGrad = ctx.createLinearGradient(0, 0, W, H);
+    drsGrad.addColorStop(0,'rgba(0,235,255,0.22)');
+    drsGrad.addColorStop(1,'rgba(0,135,255,0.12)');
+    ctx.lineWidth = drsGlowW * 1.05;
+    ctx.shadowColor = 'rgba(0,220,255,0.76)';
+    ctx.shadowBlur = 16 * trackW;
     ctx.strokeStyle = drsGrad;
-    ctx.lineJoin='round'; ctx.stroke();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // Inner dashed highlight line.
+    ctx.lineWidth = drsGlowW * 0.22;
+    ctx.setLineDash([8 * trackW, 14 * trackW]);
+    ctx.strokeStyle = 'rgba(210,255,255,0.55)';
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.restore();
 
     // DRS label
@@ -1569,16 +1702,34 @@ function buildOffscreenTrack(W, H) {
 
   // ── 11. Center dashed white line ──────────────────────────────────
   ctx.save(); tracePath();
-  ctx.lineWidth = centerLineW; ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = centerLineW; ctx.strokeStyle = 'rgba(255,255,255,0.16)';
   ctx.setLineDash([20 * trackW, 32 * trackW]); ctx.lineJoin='round'; ctx.stroke();
   ctx.setLineDash([]); ctx.restore();
+
+  // ── 11.5 Sector colour tint line (S1 yellow, S2 purple, S3 green) ─
+  {
+    const s1 = 0;
+    const s2 = Math.floor(SECTOR_SPLITS[0] * N);
+    const s3 = Math.floor(SECTOR_SPLITS[1] * N);
+    const cols = ['#ffd200', '#b466ff', '#33ff88'];
+    const segW = Math.max(2.6, centerLineW * 3.6);
+    const glowW = segW * 1.8;
+    [[s1, s2, cols[0]],[s2, s3, cols[1]],[s3, 0, cols[2]]].forEach(([a, b, col]) => {
+      strokeSegment(a, b, glowW, hexAlpha(col, 0.10), [], {
+        gco: 'screen',
+        shadowColor: hexAlpha(col, 0.55),
+        shadowBlur: 10 * trackW,
+      });
+      strokeSegment(a, b, segW, hexAlpha(col, 0.28), [], { gco: 'screen' });
+    });
+  }
 
   // ── 12. Sector boundary lines ─────────────────────────────────────
   SECTOR_SPLITS.forEach((frac, si) => {
     const idx = Math.floor(frac * N);
     const [sx, sy] = pts[idx], [nx, ny] = pts[(idx+1)%N];
     const ang = Math.atan2(ny-sy, nx-sx) + Math.PI/2;
-    const col = si===0?'#ff3333':'#33ff88';
+    const col = si===0?'#b466ff':'#33ff88';
     ctx.save(); ctx.translate(sx,sy); ctx.rotate(ang);
     // Glow bar
     const g = ctx.createLinearGradient(-18,0,18,0);
@@ -1768,8 +1919,21 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   const FS = 8.5 * s;
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
   ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
   const tw = ctx.measureText(car.code).width;
-  const bW = tw + 14;
+  const tyreRaw = String(car.tyre || '').trim().toUpperCase();
+  const tyre = /^[SMHIW]$/.test(tyreRaw) ? tyreRaw : '';
+  const TYRE_SPEC = {
+    S: { name: 'Soft',  col: '#ff3b30', text: '#fff' },
+    M: { name: 'Medium',col: '#f7d32a', text: '#111' },
+    H: { name: 'Hard',  col: '#e7e7e7', text: '#111' },
+    I: { name: 'Inter', col: '#2ee59d', text: '#111' },
+    W: { name: 'Wet',   col: '#3b82f6', text: '#fff' },
+  };
+  const tyreSpec = TYRE_SPEC[tyre] || null;
+  const tyreR = tyreSpec ? (3.1 * s) : 0;
+  const tyrePad = tyreSpec ? (tyreR * 2 + 10) : 0;
+  const bW = tw + 14 + tyrePad;
   const bH = 13;
   const bX = cx - bW / 2;
   const closePacked = (car._localDensity || 0) > 2;
@@ -1786,10 +1950,32 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   else ctx.fillRect(bX, bY, 4, bH);
   ctx.fillStyle = 'rgba(255,255,255,0.38)';
   ctx.font = '500 7px "IBM Plex Mono",monospace';
-  ctx.fillText(`P${car.pos}`, cx + tw / 2 + 2, bY + bH - 2);
+  const posX = tyreSpec ? (bX + bW - tyrePad - 2) : (cx + tw / 2 + 2);
+  ctx.fillText(`P${car.pos}`, posX, bY + bH - 2);
   ctx.fillStyle = '#ffffff';
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
   ctx.fillText(car.code, cx + 2.5, bY + bH - 3);
+
+  // Tiny tyre indicator (color dot + compound letter)
+  if (tyreSpec) {
+    const tx = bX + bW - (tyreR + 6);
+    const ty = bY + (bH * 0.52);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 5;
+    ctx.fillStyle = tyreSpec.col;
+    ctx.beginPath(); ctx.arc(tx, ty, tyreR, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath(); ctx.arc(tx, ty, tyreR, 0, Math.PI * 2); ctx.stroke();
+    ctx.font = `900 ${Math.max(7, 7.4 * s)}px "IBM Plex Mono",monospace`;
+    ctx.fillStyle = tyreSpec.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tyre, tx, ty + 0.2);
+    ctx.restore();
+  }
   ctx.restore();
 }
 
@@ -1804,6 +1990,23 @@ function drawCarSprite(ctx, cx, cy, angle, car, isLeader) {
   const drawW = spriteW * CAR_LENGTH_SCALE;
   const drawH = spriteH * 1.03;
   const rot = angle + (carSpriteConfig.rotationDeg || 0) * Math.PI / 180;
+
+  // Team color glow + leader aura (sprite mode).
+  {
+    const glowW = drawW * (isLeader ? 0.92 : 0.84);
+    const glowH = drawH * (isLeader ? 0.56 : 0.50);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.globalCompositeOperation = 'screen';
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(glowW, glowH));
+    g.addColorStop(0,   hexAlpha(car.color, isLeader ? 0.30 : 0.20));
+    g.addColorStop(0.6, hexAlpha(car.color, isLeader ? 0.10 : 0.06));
+    g.addColorStop(1,   'transparent');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(0, 0, glowW, glowH, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   ctx.save();
   ctx.translate(cx, cy);
@@ -2006,10 +2209,16 @@ function drawCar(ctx, cx, cy, angle, car, isLeader) {
 
   // ── LEADER GLOW ──────────────────────────────────────────────────
   if (isLeader) {
-    ctx.strokeStyle='rgba(255,215,0,0.7)'; ctx.lineWidth=1.5;
-    ctx.shadowColor='rgba(255,200,0,0.6)'; ctx.shadowBlur=10;
-    ctx.beginPath(); ctx.ellipse(0,0,13*s,5.5*s,0,0,Math.PI*2);
-    ctx.stroke(); ctx.shadowBlur=0;
+    // Soft aura only (no circular outline).
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.shadowColor='rgba(255,200,0,0.55)';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = 'rgba(255,215,0,0.08)';
+    ctx.beginPath(); ctx.ellipse(0,0,13*s,5.7*s,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 
   ctx.filter = 'none';
@@ -2298,21 +2507,14 @@ function startRenderLoop(canvas) {
 function showEvents(lap) {
   const events = (raceData.events || []).filter(e => e.lap === lap);
   events.forEach(e => {
-    const key = `${e.lap}-${e.type}`;
+    const key = `${e.lap}|${e.type}|${e.driver || ''}|${e.message || ''}`;
     if (shownEvents.has(key)) return;
     shownEvents.add(key);
 
-    // Bottom TV event strip
-    const strip = document.getElementById('tvEventStrip');
-    if (strip) {
-      strip.innerHTML = `
-        <span class="tv-event-type ${e.type}">${e.type.toUpperCase()}</span>
-        <span class="tv-event-msg">${e.message}</span>
-        <span class="tv-event-lap">LAP ${e.lap}</span>
-      `;
-      strip.style.animation = 'none';
-      void strip.offsetWidth;
-      strip.style.animation = '';
+    // Race Control: incidents only (top banner)
+    const t = String(e.type || '').toLowerCase();
+    if (t === 'incident' || t === 'dnf') {
+      showRaceControlEvent(e);
     }
 
     // Fastest lap flash overlay
