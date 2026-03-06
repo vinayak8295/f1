@@ -194,6 +194,7 @@ function initRecap() {
   totalLaps = raceData.race.laps || 71;
   currentLap = 0;
   shownEvents = new Set();
+  pitStopSchedule = buildPitStopSchedule();
   if (raceControlHideTimer) { clearTimeout(raceControlHideTimer); raceControlHideTimer = null; }
   activeLapChip = 0;
   activeLapChipEl = null;
@@ -232,6 +233,7 @@ function initRecap() {
       <span class="tv-event-lap">LAP 0</span>
     `;
   }
+  updatePitBoxOverlay(0);
 
   // Show recap screen
   document.getElementById('idleScreen').style.display = 'none';
@@ -978,6 +980,11 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+function easeInOutQuad(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+}
+
 function normalizeAngle(rad) {
   let a = rad;
   while (a > Math.PI) a -= Math.PI * 2;
@@ -989,6 +996,280 @@ function smoothAngle(current, target, t) {
   if (!Number.isFinite(current)) return target;
   const delta = normalizeAngle(target - current);
   return current + delta * Math.max(0, Math.min(1, t));
+}
+
+function parseDurationSeconds(value) {
+  const n = parseFloat(String(value ?? '').replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? n : 2.5;
+}
+
+function inferCompoundFromText(value) {
+  const text = String(value ?? '').toUpperCase();
+  if (/\bSOFT\b|\bS\b/.test(text)) return 'S';
+  if (/\bMEDIUM\b|\bM\b/.test(text)) return 'M';
+  if (/\bHARD\b|\bH\b/.test(text)) return 'H';
+  if (/\bINTER\b|\bINTERMEDIATE\b|\bI\b/.test(text)) return 'I';
+  if (/\bWET\b|\bFULL WET\b|\bW\b/.test(text)) return 'W';
+  return '';
+}
+
+function buildPitStopSchedule() {
+  const stops = [];
+  const pitHistory = Array.isArray(raceData?.pitHistory) ? raceData.pitHistory : [];
+
+  pitHistory.forEach((stop, idx) => {
+    const code = normalizeDriverCode(stop.driver);
+    const lap = Number(stop.lap);
+    if (!code || !Number.isFinite(lap) || lap <= 0) return;
+
+    const compound = inferCompoundFromText(stop.compound || stop.tyre || stop.message);
+    const durationSec = parseDurationSeconds(stop.duration || stop.timeLoss || stop.stopTime);
+    const holdFrac = Math.max(0.10, Math.min(0.2, durationSec / 18));
+
+    stops.push({
+      id: `${code}-${lap}-${idx}`,
+      code,
+      lap,
+      compound: compound || '—',
+      durationSec,
+      timeLabel: String(stop.time || '').trim(),
+      holdFrac,
+    });
+  });
+
+  if (!stops.length) {
+    (raceData?.events || [])
+      .filter(e => String(e?.type || '').toLowerCase() === 'pitstop')
+      .forEach((event, idx) => {
+        const code = normalizeDriverCode(event.driver);
+        const lap = Number(event.lap);
+        if (!code || !Number.isFinite(lap) || lap <= 0) return;
+        const compound = inferCompoundFromText(event.message);
+        stops.push({
+          id: `${code}-${lap}-${idx}`,
+          code,
+          lap,
+          compound: compound || '—',
+          durationSec: 2.5,
+          timeLabel: '',
+          holdFrac: 0.14,
+        });
+      });
+  }
+
+  const ordered = stops.sort((a, b) => a.lap - b.lap || a.code.localeCompare(b.code));
+  const lapCounts = new Map();
+  ordered.forEach(stop => {
+    lapCounts.set(stop.lap, (lapCounts.get(stop.lap) || 0) + 1);
+  });
+  const lapSeen = new Map();
+  ordered.forEach(stop => {
+    const seen = lapSeen.get(stop.lap) || 0;
+    stop.stackIndex = seen;
+    stop.lapGroupSize = lapCounts.get(stop.lap) || 1;
+    lapSeen.set(stop.lap, seen + 1);
+  });
+  return ordered;
+}
+
+function collectWrappedSegmentWithIndices(path, startFrac, endFrac) {
+  const N = path.length;
+  if (!N) return [];
+  const startIdx = Math.max(0, Math.min(N - 1, Math.floor(startFrac * N)));
+  const endIdx = Math.max(0, Math.min(N - 1, Math.floor(endFrac * N)));
+  const out = [];
+  let i = startIdx;
+  for (let step = 0; step < N; step++) {
+    out.push({ idx: i, point: path[i] });
+    if (i === endIdx) break;
+    i = (i + 1) % N;
+  }
+  return out;
+}
+
+function samplePolylineAt(points, t) {
+  const list = Array.isArray(points) ? points : [];
+  if (!list.length) return null;
+  if (list.length === 1) return { x: list[0][0], y: list[0][1], angle: 0 };
+
+  const clamped = Math.max(0, Math.min(1, t));
+  const maxIdx = list.length - 1;
+  const scaled = clamped * maxIdx;
+  const idx = Math.floor(scaled);
+  const frac = scaled - idx;
+  const p1 = list[idx];
+  const p2 = list[Math.min(maxIdx, idx + 1)];
+  const prev = list[Math.max(0, idx - 1)];
+  const next = list[Math.min(maxIdx, idx + 1)];
+
+  return {
+    x: lerp(p1[0], p2[0], frac),
+    y: lerp(p1[1], p2[1], frac),
+    angle: Math.atan2(next[1] - prev[1], next[0] - prev[0])
+  };
+}
+
+function buildPitLaneGeometry(path, normals) {
+  if (!Array.isArray(path) || path.length < 20 || !Array.isArray(normals) || normals.length !== path.length) {
+    return null;
+  }
+
+  const segment = collectWrappedSegmentWithIndices(path, 0.88, 0.035);
+  if (segment.length < 10) return null;
+
+  let cx = 0;
+  let cy = 0;
+  path.forEach(([x, y]) => { cx += x; cy += y; });
+  cx /= path.length;
+  cy /= path.length;
+
+  let centroidVote = 0;
+  segment.forEach(({ idx, point }) => {
+    const normal = normals[idx] || [0, 0];
+    centroidVote += (cx - point[0]) * normal[0] + (cy - point[1]) * normal[1];
+  });
+  const sign = centroidVote >= 0 ? 1 : -1;
+  const maxOffset = 28 * TRACK_WIDTH_MULT;
+  const edgeSpan = Math.max(4, Math.floor(segment.length * 0.18));
+
+  const points = segment.map(({ idx, point }, j) => {
+    const normal = normals[idx] || [0, 0];
+    const edgeIn = Math.min(1, j / edgeSpan);
+    const edgeOut = Math.min(1, (segment.length - 1 - j) / edgeSpan);
+    const edgeBlend = easeInOutQuad(Math.min(edgeIn, edgeOut));
+    const offset = maxOffset * edgeBlend;
+    return [
+      point[0] + normal[0] * sign * offset,
+      point[1] + normal[1] * sign * offset,
+    ];
+  });
+
+  const stopT = 0.58;
+  const stopSample = samplePolylineAt(points, stopT);
+
+  return {
+    points,
+    stopT,
+    stopSample,
+    entryPoint: points[0],
+    exitPoint: points[points.length - 1]
+  };
+}
+
+function getReplayLapValue() {
+  if (usingRealData && replayFrames.length) {
+    const maxT = replayFrames[replayFrames.length - 1]?.t || 1;
+    return clampLapValue((replayTime / Math.max(maxT, 1)) * totalLaps);
+  }
+  return clampLapValue(currentLap);
+}
+
+function getPitStateForStop(stop, lapValue) {
+  if (!stop || !Number.isFinite(lapValue)) return null;
+
+  const totalWindow = 0.30;
+  const stagger = ((stop.stackIndex || 0) - (((stop.lapGroupSize || 1) - 1) * 0.5)) * 0.05;
+  const startLap = stop.lap - totalWindow * 0.62 + stagger;
+  const progress = (lapValue - startLap) / totalWindow;
+  if (progress < 0 || progress > 1) return null;
+
+  const entryEnd = 0.20;
+  const travelEnd = 0.54;
+  const holdEnd = Math.min(0.84, travelEnd + stop.holdFrac);
+  let phase = 'entry';
+  let phaseLabel = 'PIT ENTRY';
+  let pathT = 0;
+
+  if (progress < entryEnd) {
+    pathT = lerp(0, 0.18, easeInOutQuad(progress / entryEnd));
+  } else if (progress < travelEnd) {
+    phase = 'lane';
+    phaseLabel = 'IN PIT LANE';
+    pathT = lerp(0.18, pitLaneGeometry?.stopT ?? 0.58, easeInOutQuad((progress - entryEnd) / Math.max(0.001, travelEnd - entryEnd)));
+  } else if (progress < holdEnd) {
+    phase = 'service';
+    phaseLabel = 'SERVICE';
+    pathT = pitLaneGeometry?.stopT ?? 0.58;
+  } else {
+    phase = 'exit';
+    phaseLabel = 'PIT EXIT';
+    pathT = lerp(pitLaneGeometry?.stopT ?? 0.58, 1, easeInOutQuad((progress - holdEnd) / Math.max(0.001, 1 - holdEnd)));
+  }
+
+  const pathBias = ((stop.stackIndex || 0) - (((stop.lapGroupSize || 1) - 1) * 0.5)) * 0.08;
+  const sample = (pitLaneGeometry?.points?.length)
+    ? samplePolylineAt(pitLaneGeometry.points, Math.max(0, Math.min(1, pathT + pathBias)))
+    : null;
+
+  return {
+    ...stop,
+    progress,
+    phase,
+    phaseLabel,
+    pathT,
+    sample,
+  };
+}
+
+function getPitStatesForLap(lapValue) {
+  return pitStopSchedule
+    .map(stop => getPitStateForStop(stop, lapValue))
+    .filter(Boolean);
+}
+
+function getVisiblePitStatesForLap(lapValue) {
+  const active = getPitStatesForLap(lapValue);
+  const byId = new Map(active.map(state => [state.id, state]));
+
+  pitStopSchedule.forEach(stop => {
+    if (byId.has(stop.id)) return;
+    const delta = lapValue - stop.lap;
+    if (delta < 0 || delta > 1.0) return;
+    byId.set(stop.id, {
+      ...stop,
+      phase: 'complete',
+      phaseLabel: 'PIT COMPLETE',
+      progress: 1,
+      sample: null
+    });
+  });
+
+  const phaseRank = { service: 4, lane: 3, exit: 2, entry: 1, complete: 0 };
+  return [...byId.values()].sort((a, b) => {
+    const pr = (phaseRank[b.phase] || 0) - (phaseRank[a.phase] || 0);
+    if (pr) return pr;
+    if (a.phase === 'complete' && b.phase === 'complete') return b.lap - a.lap;
+    return Math.abs(0.62 - a.progress) - Math.abs(0.62 - b.progress);
+  });
+}
+
+function updatePitBoxOverlay(lapValue) {
+  const panel = document.getElementById('tvPitBox');
+  const statusEl = document.getElementById('tvPitStatus');
+  const listEl = document.getElementById('tvPitList');
+  if (!panel || !statusEl || !listEl) return;
+
+  const states = getVisiblePitStatesForLap(lapValue).slice(0, 3);
+  if (!states.length) {
+    panel.classList.remove('active');
+    return;
+  }
+
+  panel.classList.add('active');
+  statusEl.textContent = states.length > 1 ? `${states.length} CARS` : states[0].phaseLabel;
+  listEl.innerHTML = states.map((state) => {
+    const compoundClass = /^[SMHIW]$/.test(state.compound) ? ` compound-${state.compound}` : '';
+    return `
+      <div class="tv-pit-row">
+        <div class="tv-pit-driver">${state.code}</div>
+        <div class="tv-pit-meta">
+          <span class="tv-pit-lap">LAP ${state.lap}</span>
+          <span class="tv-pit-duration">${state.durationSec.toFixed(1)}S STOP</span>
+          <span class="tv-pit-compound${compoundClass}">${state.compound || '—'}</span>
+          <span class="tv-pit-lap">${state.phaseLabel}</span>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function catmullRomPoint(p0, p1, p2, p3, t) {
@@ -1061,6 +1342,8 @@ let trackPath = [];
 let trackNormals = [];
 let preRendered = null;
 let trackViewportTransform = { scale: 1, offsetX: 0, offsetY: 0 };
+let pitLaneGeometry = null;
+let pitStopSchedule = [];
 
 // ── Color helpers ──
 function hexToRgb(hex) {
@@ -1547,6 +1830,27 @@ function buildOffscreenTrack(W, H) {
     ctx.shadowBlur = 0;
     ctx.restore();
   }
+  function tracePolyline(points) {
+    ctx.beginPath();
+    points.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+  }
+  function strokePolyline(points, lw, style, dash=[], opts={}) {
+    if (!Array.isArray(points) || points.length < 2) return;
+    ctx.save();
+    tracePolyline(points);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = style;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (dash.length) ctx.setLineDash(dash);
+    if (opts?.gco) ctx.globalCompositeOperation = opts.gco;
+    if (opts?.shadowColor) ctx.shadowColor = opts.shadowColor;
+    if (Number.isFinite(opts?.shadowBlur)) ctx.shadowBlur = opts.shadowBlur;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 
   // ── 1. Rich green environment ─────────────────────────────────────
   const bgGrad = ctx.createRadialGradient(W*0.5,H*0.45,0, W*0.5,H*0.5, Math.max(W,H)*0.75);
@@ -1612,6 +1916,37 @@ function buildOffscreenTrack(W, H) {
   // ── 8. Subtle highlight on track edges ───────────────────────────
   strokeLayer(edgeHighlightW, 'rgba(255,255,255,0.05)');
   strokeLayer(edgeSealW, asp); // re-seal
+
+  // ── 8.25 Pit lane branch ─────────────────────────────────────────
+  if (pitLaneGeometry?.points?.length) {
+    const pitPts = pitLaneGeometry.points;
+    strokePolyline(pitPts, 17 * trackW, 'rgba(0,0,0,0.44)');
+    strokePolyline(pitPts, 13.5 * trackW, '#1c2028');
+    strokePolyline(pitPts, 12 * trackW, 'rgba(255,255,255,0.04)');
+    strokePolyline(pitPts, 8.5 * trackW, 'rgba(120,150,175,0.14)');
+    strokePolyline(pitPts, 1.2 * trackW, 'rgba(255,255,255,0.26)', [10 * trackW, 10 * trackW]);
+
+    const stopSample = pitLaneGeometry.stopSample;
+    if (stopSample) {
+      ctx.save();
+      ctx.translate(stopSample.x, stopSample.y);
+      ctx.rotate(stopSample.angle);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.1;
+      ctx.strokeRect(-16 * trackW, -5.5 * trackW, 28 * trackW, 11 * trackW);
+      ctx.fillStyle = 'rgba(0,0,0,0.68)';
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(-13, -17, 26, 11, 3);
+        ctx.fill();
+      }
+      ctx.font = 'bold 7px "Orbitron",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd84d';
+      ctx.fillText('PIT', 0, -9);
+      ctx.restore();
+    }
+  }
 
   // ── 8.5 Neon track outline for readability (YouTube) ─────────────
   ctx.save(); tracePath();
@@ -1833,6 +2168,7 @@ function spawnCars() {
   resetLiveTrackProgressState();
 
   trackNormals = buildNormals(trackPath);
+  pitLaneGeometry = buildPitLaneGeometry(trackPath, trackNormals);
   preRendered  = buildOffscreenTrack(canvasW, canvasH);
   initCarSpritesFromData();
 
@@ -2444,13 +2780,23 @@ function startRenderLoop(canvas) {
     // Give cars lateral room during close racing so overtakes are visible.
     applyOvertakeLaneOffsets(trackCars, dt);
 
+    const pitStates = getPitStatesForLap(getReplayLapValue());
+    const pitStateByCode = new Map(pitStates.map(state => [state.code, state]));
+    trackCars.forEach(car => {
+      const state = pitStateByCode.get(car.code);
+      car._pitState = state || null;
+      car._pitRender = state?.sample || null;
+    });
+
     // Trail dots
     trackCars.forEach(car => {
+      const px = car._pitRender?.x ?? car.renderX;
+      const py = car._pitRender?.y ?? car.renderY;
       trailCtx.save();
       trailCtx.globalAlpha = 0.45;
       trailCtx.fillStyle = car.color;
       trailCtx.beginPath();
-      trailCtx.arc(car.renderX, car.renderY, 2.5, 0, Math.PI*2);
+      trailCtx.arc(px, py, 2.5, 0, Math.PI*2);
       trailCtx.fill();
       trailCtx.restore();
     });
@@ -2462,8 +2808,11 @@ function startRenderLoop(canvas) {
 
     // Draw cars back→front
     [...trackCars].sort((a,b) => b.pos - a.pos).forEach(car => {
-      if (car.renderX > 0 && car.renderY > 0) {
-        drawCar(ctx, car.renderX, car.renderY, car.angle, car, car.pos === 1);
+      const px = car._pitRender?.x ?? car.renderX;
+      const py = car._pitRender?.y ?? car.renderY;
+      const pa = car._pitRender?.angle ?? car.angle;
+      if (px > 0 && py > 0) {
+        drawCar(ctx, px, py, pa, car, car.pos === 1);
       }
     });
 
@@ -2915,6 +3264,8 @@ function updatePlayback(lap) {
     const car = trackCars.find(c => c.code === d.code);
     if (car) { car.pos = d.pos; car.tyre = d.tyre; }
   });
+
+  updatePitBoxOverlay(lapValue);
 
   if (displayLap >= 1) showEvents(displayLap);
 }

@@ -580,10 +580,147 @@
     animation: tvEventSlide 5s ease forwards;
   }
 
+  /* ── BOTTOM RIGHT: Pit lane broadcast box ── */
+  .tv-pit-box {
+    position: absolute;
+    left: 22px;
+    bottom: 22px;
+    z-index: 24;
+    width: min(300px, calc(100vw - 48px));
+    padding: 10px 14px 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-bottom: 2px solid #ffd84d;
+    border-radius: 6px;
+    background: linear-gradient(180deg, rgba(10,12,20,0.96), rgba(7,9,16,0.92));
+    box-shadow: 0 16px 36px rgba(0,0,0,0.42);
+    backdrop-filter: blur(10px);
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+
+  .tv-pit-box.active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .tv-pit-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .tv-pit-tag {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.52rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    background: #ffd84d;
+    color: #111;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .tv-pit-status {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: rgba(255,255,255,0.78);
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .tv-pit-driver {
+    font-family: 'Orbitron', monospace;
+    font-size: 1.1rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #fff;
+    line-height: 1;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.35);
+  }
+
+  .tv-pit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tv-pit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .tv-pit-row:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .tv-pit-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .tv-pit-lap,
+  .tv-pit-duration {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: rgba(255,255,255,0.86);
+    letter-spacing: 0.4px;
+  }
+
+  .tv-pit-duration {
+    color: #ffd84d;
+    font-weight: 700;
+    font-size: 1.34rem;
+    line-height: 1;
+    letter-spacing: 1px;
+  }
+
+  .tv-pit-compound {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+  }
+
+  .tv-pit-compound.compound-S { background: #E8002D; color: #fff; }
+  .tv-pit-compound.compound-M { background: #ffd84d; color: #111; }
+  .tv-pit-compound.compound-H { background: #efefef; color: #111; }
+  .tv-pit-compound.compound-I { background: #22c55e; color: #08120b; }
+  .tv-pit-compound.compound-W { background: #2563eb; color: #fff; }
+
   @media (max-width: 980px) {
     .tv-race-control-bar {
       top: 76px;
       width: calc(100vw - 32px);
+    }
+
+    .tv-pit-box {
+      left: 12px;
+      bottom: 12px;
+      width: min(260px, calc(100vw - 24px));
+      padding: 9px 12px 10px;
     }
   }
 
