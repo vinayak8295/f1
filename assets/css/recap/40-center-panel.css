@@ -293,7 +293,7 @@
     top: 410px;
     left: 14px;
     z-index: 22;
-    width: 236px;
+    width: 250px;
     background: linear-gradient(180deg, rgba(16,21,36,0.96), rgba(8,11,22,0.96));
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 4px;
@@ -408,6 +408,35 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  .tt-driver-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .tt-tyre {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 999px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    font-weight: 800;
+    line-height: 1;
+    border: 1px solid rgba(255,255,255,0.16);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+
+  .tt-tyre-S { background: #E8002D; color: #fff; }
+  .tt-tyre-M { background: #ffd84d; color: #111; }
+  .tt-tyre-H { background: #efefef; color: #111; }
+  .tt-tyre-I { background: #22c55e; color: #08120b; }
+  .tt-tyre-W { background: #2563eb; color: #fff; }
 
   .tt-gap {
     font-family: 'IBM Plex Mono', monospace;

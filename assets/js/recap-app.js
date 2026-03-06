@@ -815,6 +815,7 @@ function renderTimingTower(drivers) {
     const gapLabel = i === 0 ? 'Leader' : (isOut ? 'Out' : (gapRaw || '—'));
 
     const code = normalizeDriverCode(d.code) || '---';
+    const tyre = /^[SMHIW]$/i.test(String(d.tyre || '').trim()) ? String(d.tyre).trim().toUpperCase() : '';
     const currPos = Number(d.pos);
 
     if (code !== '---' && !(code in nextBaseline) && Number.isFinite(currPos) && currPos > 0 && isPlaying) {
@@ -836,7 +837,10 @@ function renderTimingTower(drivers) {
         <span class="tt-team-logo">
           ${teamPath ? `<img src="${teamPath}" alt="${d.team || ''}" loading="lazy" onerror="this.style.display='none'">` : ''}
         </span>
-        <span class="tt-driver">${code}</span>
+        <span class="tt-driver-wrap">
+          <span class="tt-driver">${code}</span>
+          ${tyre ? `<span class="tt-tyre tt-tyre-${tyre}" title="Current tyre: ${tyre}">${tyre}</span>` : ''}
+        </span>
         <span class="tt-gap ${i===0?'leader-gap':''} ${isOut?'out-gap':''}">${gapLabel}</span>
         <span class="tt-ind ${indClass}">${indText}</span>
       </div>`;
@@ -1921,19 +1925,7 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   const tw = ctx.measureText(car.code).width;
-  const tyreRaw = String(car.tyre || '').trim().toUpperCase();
-  const tyre = /^[SMHIW]$/.test(tyreRaw) ? tyreRaw : '';
-  const TYRE_SPEC = {
-    S: { name: 'Soft',  col: '#ff3b30', text: '#fff' },
-    M: { name: 'Medium',col: '#f7d32a', text: '#111' },
-    H: { name: 'Hard',  col: '#e7e7e7', text: '#111' },
-    I: { name: 'Inter', col: '#2ee59d', text: '#111' },
-    W: { name: 'Wet',   col: '#3b82f6', text: '#fff' },
-  };
-  const tyreSpec = TYRE_SPEC[tyre] || null;
-  const tyreR = tyreSpec ? (3.1 * s) : 0;
-  const tyrePad = tyreSpec ? (tyreR * 2 + 10) : 0;
-  const bW = tw + 14 + tyrePad;
+  const bW = tw + 14;
   const bH = 13;
   const bX = cx - bW / 2;
   const closePacked = (car._localDensity || 0) > 2;
@@ -1950,32 +1942,10 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   else ctx.fillRect(bX, bY, 4, bH);
   ctx.fillStyle = 'rgba(255,255,255,0.38)';
   ctx.font = '500 7px "IBM Plex Mono",monospace';
-  const posX = tyreSpec ? (bX + bW - tyrePad - 2) : (cx + tw / 2 + 2);
-  ctx.fillText(`P${car.pos}`, posX, bY + bH - 2);
+  ctx.fillText(`P${car.pos}`, cx + tw / 2 + 2, bY + bH - 2);
   ctx.fillStyle = '#ffffff';
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
   ctx.fillText(car.code, cx + 2.5, bY + bH - 3);
-
-  // Tiny tyre indicator (color dot + compound letter)
-  if (tyreSpec) {
-    const tx = bX + bW - (tyreR + 6);
-    const ty = bY + (bH * 0.52);
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.55)';
-    ctx.shadowBlur = 5;
-    ctx.fillStyle = tyreSpec.col;
-    ctx.beginPath(); ctx.arc(tx, ty, tyreR, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.beginPath(); ctx.arc(tx, ty, tyreR, 0, Math.PI * 2); ctx.stroke();
-    ctx.font = `900 ${Math.max(7, 7.4 * s)}px "IBM Plex Mono",monospace`;
-    ctx.fillStyle = tyreSpec.text;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(tyre, tx, ty + 0.2);
-    ctx.restore();
-  }
   ctx.restore();
 }
 
@@ -2958,8 +2928,8 @@ function renderLiveLeaderboard(standings, displayLap) {
   });
 }
 
-let userSpeedMult = 1.0; // user-controlled multiplier on top of auto replaySpeed
-const SPEED_STEPS  = [0.5, 1, 2, 4];
+let userSpeedMult = 0.8; // user-controlled multiplier on top of auto replaySpeed
+const SPEED_STEPS  = [0.5, 0.8, 1, 2, 4];
 
 function cycleSpeed() {
   const cur = SPEED_STEPS.indexOf(userSpeedMult);
