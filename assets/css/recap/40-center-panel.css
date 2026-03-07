@@ -131,6 +131,71 @@
     margin-top: 1px;
   }
 
+  .tv-info-stack {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 22;
+    width: min(268px, calc(100vw - 32px));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .tv-info-card {
+    position: relative;
+    padding: 8px 11px 9px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-left: 3px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, rgba(13,16,28,0.94), rgba(7,10,18,0.9)),
+      radial-gradient(circle at top right, rgba(255,255,255,0.06), transparent 45%);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.34);
+    overflow: hidden;
+  }
+
+  .tv-info-card-fastest { border-left-color: #cf5cff; }
+  .tv-info-card-lapbest { border-left-color: #7ee7ff; }
+  .tv-info-card-incident { border-left-color: rgba(255,255,255,0.22); }
+  .tv-info-card-incident.has-incident { border-left-color: #ff9d2e; }
+  .tv-info-card-incident.is-retirement { border-left-color: #ff4d5f; }
+
+  .tv-info-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.52rem;
+    font-weight: 800;
+    letter-spacing: 1.8px;
+    color: rgba(186, 216, 236, 0.72);
+    text-transform: uppercase;
+  }
+
+  .tv-info-main {
+    margin-top: 3px;
+    font-family: 'Orbitron', monospace;
+    font-size: 1.26rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #f2fbff;
+    line-height: 1.02;
+  }
+
+  .tv-info-main-status {
+    font-size: 0.96rem;
+    letter-spacing: 1.2px;
+  }
+
+  .tv-info-sub {
+    margin-top: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    line-height: 1.35;
+    color: rgba(203, 221, 232, 0.72);
+    letter-spacing: 0.35px;
+  }
+
   /* Top-right circular lap HUD */
   .tv-lap-counter {
     --lap-progress-pct: 0;
@@ -583,16 +648,18 @@
   /* ── BOTTOM RIGHT: Pit lane broadcast box ── */
   .tv-pit-box {
     position: absolute;
-    left: 22px;
-    bottom: 22px;
+    right: 20px;
+    bottom: 18px;
     z-index: 24;
-    width: min(300px, calc(100vw - 48px));
-    padding: 10px 14px 12px;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-bottom: 2px solid #ffd84d;
-    border-radius: 6px;
-    background: linear-gradient(180deg, rgba(10,12,20,0.96), rgba(7,9,16,0.92));
-    box-shadow: 0 16px 36px rgba(0,0,0,0.42);
+    width: min(248px, calc(100vw - 36px));
+    padding: 8px 10px 10px;
+    border: 1px solid rgba(255,216,77,0.16);
+    border-right: 2px solid #ffd84d;
+    border-radius: 7px;
+    background:
+      linear-gradient(180deg, rgba(9,12,22,0.94), rgba(6,8,15,0.9)),
+      radial-gradient(circle at top right, rgba(255,216,77,0.08), transparent 42%);
+    box-shadow: 0 14px 28px rgba(0,0,0,0.34);
     backdrop-filter: blur(10px);
     opacity: 0;
     transform: translateY(10px);
@@ -608,16 +675,17 @@
   .tv-pit-top {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
 
   .tv-pit-tag {
     font-family: 'Orbitron', monospace;
-    font-size: 0.52rem;
+    font-size: 0.48rem;
     font-weight: 900;
-    letter-spacing: 2px;
-    padding: 2px 8px;
+    letter-spacing: 1.8px;
+    padding: 2px 7px;
     border-radius: 2px;
     background: #ffd84d;
     color: #111;
@@ -626,36 +694,38 @@
   }
 
   .tv-pit-status {
-    font-family: 'Rajdhani', sans-serif;
-    font-size: 0.78rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.58rem;
     font-weight: 700;
-    letter-spacing: 1.2px;
-    color: rgba(255,255,255,0.78);
+    letter-spacing: 0.7px;
+    color: rgba(255,255,255,0.68);
     text-transform: uppercase;
     line-height: 1;
+    text-align: right;
   }
 
   .tv-pit-driver {
     font-family: 'Orbitron', monospace;
-    font-size: 1.1rem;
+    font-size: 0.92rem;
     font-weight: 900;
-    letter-spacing: 2px;
+    letter-spacing: 1.2px;
     color: #fff;
     line-height: 1;
-    text-shadow: 0 2px 12px rgba(0,0,0,0.35);
+    text-shadow: 0 1px 10px rgba(0,0,0,0.35);
   }
 
   .tv-pit-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
   }
 
   .tv-pit-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding-top: 8px;
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 7px;
+    align-items: center;
+    padding-top: 6px;
     border-top: 1px solid rgba(255,255,255,0.08);
   }
 
@@ -666,38 +736,58 @@
 
   .tv-pit-meta {
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .tv-pit-phase {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: rgba(255,255,255,0.9);
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .tv-pit-subline {
+    display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     flex-wrap: wrap;
   }
 
   .tv-pit-lap,
-  .tv-pit-duration {
+  .tv-pit-note {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.78rem;
-    color: rgba(255,255,255,0.86);
+    font-size: 0.62rem;
+    color: rgba(255,255,255,0.68);
     letter-spacing: 0.4px;
   }
 
   .tv-pit-duration {
+    justify-self: end;
     color: #ffd84d;
     font-weight: 700;
-    font-size: 1.34rem;
+    font-size: 0.96rem;
     line-height: 1;
-    letter-spacing: 1px;
+    letter-spacing: 0.7px;
+    font-family: 'Orbitron', monospace;
   }
 
   .tv-pit-compound {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,0.14);
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.68rem;
+    font-size: 0.58rem;
     font-weight: 800;
     line-height: 1;
     color: #fff;
@@ -716,11 +806,21 @@
       width: calc(100vw - 32px);
     }
 
+    .tv-info-stack {
+      right: 12px;
+      top: 12px;
+      width: min(220px, calc(100vw - 24px));
+    }
+
+    .tv-info-main {
+      font-size: 1.06rem;
+    }
+
     .tv-pit-box {
-      left: 12px;
+      right: 12px;
       bottom: 12px;
-      width: min(260px, calc(100vw - 24px));
-      padding: 9px 12px 10px;
+      width: min(220px, calc(100vw - 24px));
+      padding: 8px 9px 9px;
     }
   }
 
@@ -811,6 +911,15 @@
   }
 
   @media (max-width: 1400px), (max-height: 820px) {
+    .tv-info-stack {
+      width: 236px;
+      gap: 6px;
+    }
+
+    .tv-info-main {
+      font-size: 1.1rem;
+    }
+
     .tv-lap-counter {
       width: 188px;
       height: 188px;

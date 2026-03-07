@@ -9,6 +9,7 @@ let shownEvents = new Set();
 let raceControlHideTimer = null;
 let activeLapChip = 0;
 let activeLapChipEl = null;
+let latestIncidentEvent = null;
 let timingBaselinePosByCode = {};
 let leaderboardPrevPosByCode = {};
 let leaderboardLastOrderSignature = '';
@@ -139,6 +140,179 @@ function setStatus(msg) {
   document.getElementById('statusText').textContent = msg;
 }
 
+function parseTimeValueToSeconds(value) {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+(?:\.\d+)?$/.test(text)) return parseFloat(text);
+  const parts = text.split(':').map(Number);
+  if (parts.some(v => !Number.isFinite(v))) return null;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return null;
+}
+
+function formatLapTimeValue(value) {
+  if (value == null) return '—';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return '—';
+    const parsed = parseTimeValueToSeconds(trimmed);
+    if (!Number.isFinite(parsed)) return trimmed;
+    value = parsed;
+  }
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return '—';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds - mins * 60;
+  return `${mins}:${secs.toFixed(3).padStart(6, '0')}`;
+}
+
+function getPlaybackClockSeconds(lapValue = currentLap) {
+  if (usingRealData && replayFrames.length) {
+    return Math.max(0, replayTime);
+  }
+  return Math.max(0, (Number(lapValue) || 0) / Math.max(totalLaps || 1, 1) * 5400);
+}
+
+function trimInfoText(value, maxLength = 62) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text;
+}
+
+function getLapRecordsAtTime(lapValue) {
+  const records = Array.isArray(raceData?.laps) ? raceData.laps : [];
+  if (!records.length) return [];
+  const displayLap = lapValueToCurrentLap(lapValue);
+  const cutoff = getPlaybackClockSeconds(lapValue);
+  return records.filter(record => {
+    const lapNo = Number(record?.lap);
+    if (!Number.isFinite(lapNo) || lapNo < 1 || lapNo > displayLap) return false;
+    const sessionTime = parseTimeValueToSeconds(record?.sessionTime);
+    if (Number.isFinite(sessionTime)) return sessionTime <= cutoff + 0.001;
+    return lapNo < displayLap || lapValue >= lapNo;
+  });
+}
+
+function getFastestLapSoFar(lapValue) {
+  const displayLap = lapValueToCurrentLap(lapValue);
+  const timed = getLapRecordsAtTime(lapValue)
+    .map(record => ({
+      driver: normalizeDriverCode(record?.driver || record?.code),
+      lap: Number(record?.lap) || 0,
+      lapTime: parseTimeValueToSeconds(record?.lapTime),
+    }))
+    .filter(record => record.driver && Number.isFinite(record.lapTime) && record.lapTime > 0);
+
+  if (timed.length) {
+    timed.sort((a, b) => a.lapTime - b.lapTime || a.lap - b.lap);
+    return timed[0];
+  }
+
+  const eventFastest = (raceData?.events || [])
+    .filter(event => String(event?.type || '').toLowerCase() === 'fastest' && Number(event?.lap) <= displayLap)
+    .map(event => {
+      const match = String(event?.message || '').match(/[\d:]+\.\d+/);
+      return {
+        driver: normalizeDriverCode(event?.driver),
+        lap: Number(event?.lap) || 0,
+        lapTime: parseTimeValueToSeconds(match ? match[0] : null)
+      };
+    })
+    .filter(record => record.driver && Number.isFinite(record.lapTime))
+    .sort((a, b) => a.lapTime - b.lapTime || a.lap - b.lap);
+
+  if (eventFastest.length) return eventFastest[0];
+
+  const fallback = raceData?.fastestLap || null;
+  if (!fallback || Number(fallback?.lap) > displayLap) return null;
+  return {
+    driver: normalizeDriverCode(fallback.driver),
+    lap: Number(fallback.lap) || 0,
+    lapTime: parseTimeValueToSeconds(fallback.time) ?? fallback.time
+  };
+}
+
+function getCurrentLapBestInfo(lapValue) {
+  const displayLap = lapValueToCurrentLap(lapValue);
+  const targetLap = Math.max(0, displayLap - 1);
+  if (targetLap <= 0) return null;
+  const cutoff = getPlaybackClockSeconds(lapValue);
+  const records = (Array.isArray(raceData?.laps) ? raceData.laps : [])
+    .filter(record => {
+      const lapNo = Number(record?.lap);
+      if (lapNo !== targetLap) return false;
+      const sessionTime = parseTimeValueToSeconds(record?.sessionTime);
+      if (Number.isFinite(sessionTime)) return sessionTime <= cutoff + 0.001;
+      return lapValue >= targetLap;
+    })
+    .map(record => ({
+      driver: normalizeDriverCode(record?.driver || record?.code),
+      lapTime: parseTimeValueToSeconds(record?.lapTime),
+    }))
+    .filter(record => record.driver && Number.isFinite(record.lapTime) && record.lapTime > 0)
+    .sort((a, b) => a.lapTime - b.lapTime);
+
+  if (records.length) return { lap: targetLap, ...records[0] };
+  return null;
+}
+
+function updateBroadcastInfoPanel(lapValue, displayLap) {
+  const fastest = getFastestLapSoFar(lapValue);
+  const lapBest = getCurrentLapBestInfo(lapValue);
+  const latestVisibleIncident = latestIncidentEvent || (raceData?.events || [])
+    .filter(event => {
+      const type = String(event?.type || '').toLowerCase();
+      return (type === 'incident' || type === 'dnf') && Number(event?.lap) <= displayLap;
+    })
+    .slice(-1)[0] || null;
+  const fastestTimeEl = document.getElementById('tvFastestSoFarTime');
+  const fastestMetaEl = document.getElementById('tvFastestSoFarMeta');
+  const lapBestLabelEl = document.getElementById('tvCurrentLapBestLabel');
+  const lapBestTimeEl = document.getElementById('tvCurrentLapBestTime');
+  const lapBestMetaEl = document.getElementById('tvCurrentLapBestMeta');
+  const incidentCardEl = document.getElementById('tvIncidentCard');
+  const incidentLabelEl = document.getElementById('tvIncidentLabel');
+  const incidentTitleEl = document.getElementById('tvIncidentTitle');
+  const incidentMetaEl = document.getElementById('tvIncidentMeta');
+
+  if (fastestTimeEl) fastestTimeEl.textContent = formatLapTimeValue(fastest?.lapTime ?? null);
+  if (fastestMetaEl) {
+    fastestMetaEl.textContent = fastest?.driver
+      ? `${fastest.driver} · LAP ${fastest.lap || '—'}`
+      : 'WAITING FOR LAP DATA';
+  }
+
+  const lapBestTargetLap = Math.max(0, displayLap - 1);
+  if (lapBestLabelEl) {
+    lapBestLabelEl.textContent = lapBestTargetLap > 0
+      ? `LAP ${lapBestTargetLap} BEST`
+      : 'LAST LAP BEST';
+  }
+  if (lapBestTimeEl) lapBestTimeEl.textContent = lapBest ? formatLapTimeValue(lapBest.lapTime) : '—';
+  if (lapBestMetaEl) {
+    lapBestMetaEl.textContent = lapBest?.driver
+      ? `${lapBest.driver} · LAST COMPLETED LAP`
+      : 'NO COMPLETED LAP YET';
+  }
+
+  if (incidentCardEl && incidentLabelEl && incidentTitleEl && incidentMetaEl) {
+    const type = String(latestVisibleIncident?.type || '').toLowerCase();
+    const hasIncident = !!latestVisibleIncident;
+    incidentCardEl.classList.toggle('has-incident', hasIncident);
+    incidentCardEl.classList.toggle('is-retirement', type === 'dnf');
+    incidentLabelEl.textContent = hasIncident ? (type === 'dnf' ? 'RETIREMENT' : 'INCIDENT') : 'RACE STATUS';
+    incidentTitleEl.textContent = hasIncident
+      ? (type === 'dnf' ? 'CAR OUT' : 'INCIDENT NOTED')
+      : 'TRACK CLEAR';
+    incidentMetaEl.textContent = hasIncident
+      ? trimInfoText(formatRaceControlMessage(latestVisibleIncident.message), 68)
+      : 'NO INCIDENTS REPORTED';
+  }
+}
+
 function generateRecap() {
   let raw = document.getElementById('jsonInput').value.trim();
   if (!raw) { setStatus('⚠ Please load sample data or paste JSON first'); return; }
@@ -197,6 +371,7 @@ function initRecap() {
   totalLaps = raceData.race.laps || 71;
   currentLap = 0;
   shownEvents = new Set();
+  latestIncidentEvent = null;
   pitStopSchedule = buildPitStopSchedule();
   if (raceControlHideTimer) { clearTimeout(raceControlHideTimer); raceControlHideTimer = null; }
   activeLapChip = 0;
@@ -237,6 +412,7 @@ function initRecap() {
     `;
   }
   updatePitBoxOverlay(0);
+  updateBroadcastInfoPanel(0, 0);
 
   // Show recap screen
   document.getElementById('idleScreen').style.display = 'none';
@@ -299,6 +475,7 @@ function resetLeaderboardState() {
   leaderboardRowCache.forEach(row => row.remove());
   leaderboardRowCache.clear();
   resetLiveTrackProgressState();
+  latestIncidentEvent = null;
 }
 
 function resetLiveTrackProgressState() {
@@ -1223,6 +1400,13 @@ function getPitStateForStop(stop, lapValue) {
     pathT = lerp(pitLaneGeometry?.stopT ?? 0.58, 1, easeInOutQuad((progress - holdEnd) / Math.max(0.001, 1 - holdEnd)));
   }
 
+  let liveStopSec = 0;
+  if (progress >= travelEnd && progress < holdEnd) {
+    liveStopSec = stop.durationSec * ((progress - travelEnd) / Math.max(0.001, holdEnd - travelEnd));
+  } else if (progress >= holdEnd) {
+    liveStopSec = stop.durationSec;
+  }
+
   const pathBias = ((stop.stackIndex || 0) - (((stop.lapGroupSize || 1) - 1) * 0.5)) * 0.08;
   const sample = (pitLaneGeometry?.points?.length)
     ? samplePolylineAt(pitLaneGeometry.points, Math.max(0, Math.min(1, pathT + pathBias)))
@@ -1235,6 +1419,7 @@ function getPitStateForStop(stop, lapValue) {
     phaseLabel,
     pathT,
     sample,
+    liveStopSec,
   };
 }
 
@@ -1257,7 +1442,8 @@ function getVisiblePitStatesForLap(lapValue) {
       phase: 'complete',
       phaseLabel: 'PIT COMPLETE',
       progress: 1,
-      sample: null
+      sample: null,
+      liveStopSec: stop.durationSec
     });
   });
 
@@ -1276,25 +1462,45 @@ function updatePitBoxOverlay(lapValue) {
   const listEl = document.getElementById('tvPitList');
   if (!panel || !statusEl || !listEl) return;
 
-  const states = getVisiblePitStatesForLap(lapValue).slice(0, 3);
-  if (!states.length) {
+  const allStates = getVisiblePitStatesForLap(lapValue);
+  const states = allStates.slice(0, 4);
+  if (!allStates.length) {
     panel.classList.remove('active');
     return;
   }
 
   panel.classList.add('active');
-  statusEl.textContent = states.length > 1 ? `${states.length} CARS` : states[0].phaseLabel;
+  const activeCount = allStates.filter(state => state.phase !== 'complete').length;
+  const hiddenCount = Math.max(0, allStates.length - states.length);
+  if (activeCount > 0) {
+    statusEl.textContent = hiddenCount > 0
+      ? `${activeCount} ACTIVE · +${hiddenCount} MORE`
+      : `${activeCount} ACTIVE`;
+  } else {
+    statusEl.textContent = hiddenCount > 0
+      ? `${states.length} RECENT · +${hiddenCount} MORE`
+      : 'RECENT STOPS';
+  }
   listEl.innerHTML = states.map((state) => {
     const compoundClass = /^[SMHIW]$/.test(state.compound) ? ` compound-${state.compound}` : '';
+    const durationValue = state.phase === 'service'
+      ? (Number.isFinite(state.liveStopSec) ? state.liveStopSec : state.durationSec)
+      : state.durationSec;
+    const durationLabel = state.phase === 'service'
+      ? `${durationValue.toFixed(1)}S LIVE`
+      : `${durationValue.toFixed(1)}S`;
     return `
       <div class="tv-pit-row">
         <div class="tv-pit-driver">${state.code}</div>
         <div class="tv-pit-meta">
-          <span class="tv-pit-lap">LAP ${state.lap}</span>
-          <span class="tv-pit-duration">${state.durationSec.toFixed(1)}S STOP</span>
-          <span class="tv-pit-compound${compoundClass}">${state.compound || '—'}</span>
-          <span class="tv-pit-lap">${state.phaseLabel}</span>
+          <span class="tv-pit-phase">${state.phaseLabel}</span>
+          <span class="tv-pit-subline">
+            <span class="tv-pit-lap">LAP ${state.lap}</span>
+            <span class="tv-pit-note">${state.timeLabel || 'PIT WINDOW'}</span>
+            <span class="tv-pit-compound${compoundClass}">${state.compound || '—'}</span>
+          </span>
         </div>
+        <div class="tv-pit-duration">${durationLabel}</div>
       </div>`;
   }).join('');
 }
@@ -2975,6 +3181,7 @@ function showEvents(lap) {
     // Race Control: incidents only (top banner)
     const t = String(e.type || '').toLowerCase();
     if (t === 'incident' || t === 'dnf') {
+      latestIncidentEvent = e;
       showRaceControlEvent(e);
     }
 
@@ -3401,6 +3608,7 @@ function updatePlayback(lap) {
   updateTrackBattleEffects(standings);
   safeRenderTimingTower(standings);
   renderLiveLeaderboard(standings, displayLap);
+  updateBroadcastInfoPanel(lapValue, displayLap);
 
   // Sync tyre on canvas car objects
   standings.forEach(d => {

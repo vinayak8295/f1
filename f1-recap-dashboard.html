@@ -101,7 +101,23 @@ Real data includes:
           </div>
         </div>
 
-      
+        <div class="tv-info-stack" id="tvInfoStack" aria-live="polite">
+          <div class="tv-info-card tv-info-card-fastest">
+            <div class="tv-info-label">FASTEST SO FAR</div>
+            <div class="tv-info-main" id="tvFastestSoFarTime">—</div>
+            <div class="tv-info-sub" id="tvFastestSoFarMeta">WAITING FOR LAP DATA</div>
+          </div>
+          <div class="tv-info-card tv-info-card-lapbest">
+            <div class="tv-info-label" id="tvCurrentLapBestLabel">LAP 0 BEST</div>
+            <div class="tv-info-main" id="tvCurrentLapBestTime">—</div>
+            <div class="tv-info-sub" id="tvCurrentLapBestMeta">NO TIMES POSTED YET</div>
+          </div>
+          <div class="tv-info-card tv-info-card-incident" id="tvIncidentCard">
+            <div class="tv-info-label" id="tvIncidentLabel">RACE STATUS</div>
+            <div class="tv-info-main tv-info-main-status" id="tvIncidentTitle">TRACK CLEAR</div>
+            <div class="tv-info-sub" id="tvIncidentMeta">NO INCIDENTS REPORTED</div>
+          </div>
+        </div>
 
         <!-- LEFT: Broadcast timing tower -->
         <div class="tv-timing-tower" id="tvTimingTower">

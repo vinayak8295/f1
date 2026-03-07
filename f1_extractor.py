@@ -60,6 +60,27 @@ def fmt_laptime(td):
         return "—"
 
 
+def td_seconds(value):
+    """timedelta/number-like -> float seconds or None"""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    try:
+        seconds = float(value.total_seconds())
+    except Exception:
+        try:
+            seconds = float(value)
+        except Exception:
+            return None
+    if math.isnan(seconds) or math.isinf(seconds):
+        return None
+    return round(seconds, 3)
+
+
 def rotate_xy(x, y, angle_deg):
     """Rotate (x,y) arrays by angle in degrees (for circuit orientation)."""
     rad = math.radians(angle_deg)
@@ -80,6 +101,28 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
 
     event   = session.event
     results = session.results
+
+    # Use lap-start timing as the common zero-point so lap records, replay
+    # frames, events and pit stops all share the same race clock.
+    session_time_zero = 0.0
+    try:
+        time_candidates = []
+        if not session.laps.empty:
+            if "LapStartTime" in session.laps.columns:
+                for value in session.laps["LapStartTime"].dropna().tolist():
+                    seconds = td_seconds(value)
+                    if seconds is not None:
+                        time_candidates.append(seconds)
+            if not time_candidates and {"Time", "LapTime"}.issubset(session.laps.columns):
+                for _, lap in session.laps.dropna(subset=["Time", "LapTime"]).iterrows():
+                    end_sec = td_seconds(lap.get("Time"))
+                    lap_sec = td_seconds(lap.get("LapTime"))
+                    if end_sec is not None and lap_sec is not None:
+                        time_candidates.append(max(0.0, end_sec - lap_sec))
+        if time_candidates:
+            session_time_zero = min(time_candidates)
+    except Exception:
+        session_time_zero = 0.0
 
     # ── Circuit geometry ──────────────────────────────────────────────────────
     print("🗺   Extracting circuit layout...")
@@ -215,12 +258,16 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
             pit_laps = drv_laps[drv_laps["PitInTime"].notna()]
             for _, pl in pit_laps.iterrows():
                 try:
-                    duration = (pl["PitOutTime"] - pl["PitInTime"]).total_seconds()
+                    pit_in_sec = td_seconds(pl.get("PitInTime"))
+                    pit_out_sec = td_seconds(pl.get("PitOutTime"))
+                    duration = None
+                    if pit_in_sec is not None and pit_out_sec is not None:
+                        duration = round(max(0.0, pit_out_sec - pit_in_sec), 1)
                     pit_history.append({
                         "lap":      int(pl["LapNumber"]),
                         "driver":   drv_code,
                         "team":     team,
-                        "duration": round(float(duration), 1),
+                        "duration": duration,
                         "compound": compound_code(pl.get("Compound", "—")),
                     })
                 except Exception:
@@ -252,6 +299,84 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
             strategy[drv_code] = stints
     except Exception as e:
         print(f"⚠   Strategy extraction partial: {e}")
+
+    # ── Lap timing records and normalized pit stop timeline ──────────────────
+    print("⏱  Processing lap timing records...")
+    lap_records = []
+    pit_stops = []
+    try:
+        for drv_info in drivers_out:
+            drv_code = drv_info["code"]
+            drv_num = drv_info["num"]
+            drv_laps = session.laps.pick_drivers(str(drv_num))
+            if drv_laps.empty:
+                continue
+
+            for _, lap in drv_laps.sort_values("LapNumber").iterrows():
+                lap_no = int(lap.get("LapNumber", 0) or 0)
+                if lap_no <= 0:
+                    continue
+
+                lap_start_abs = td_seconds(lap.get("LapStartTime"))
+                lap_end_abs = td_seconds(lap.get("Time"))
+                lap_time_sec = td_seconds(lap.get("LapTime"))
+                session_time = None
+                if lap_end_abs is not None:
+                    session_time = round(max(0.0, lap_end_abs - session_time_zero), 3)
+                elif lap_start_abs is not None and lap_time_sec is not None:
+                    session_time = round(max(0.0, (lap_start_abs - session_time_zero) + lap_time_sec), 3)
+
+                lap_start_time = None
+                if lap_start_abs is not None:
+                    lap_start_time = round(max(0.0, lap_start_abs - session_time_zero), 3)
+
+                lap_record = {
+                    "driver": drv_code,
+                    "code": drv_code,
+                    "lap": lap_no,
+                    "lapTime": fmt_laptime(lap.get("LapTime")),
+                    "sector1": fmt_laptime(lap.get("Sector1Time")),
+                    "sector2": fmt_laptime(lap.get("Sector2Time")),
+                    "sector3": fmt_laptime(lap.get("Sector3Time")),
+                    "sessionTime": session_time,
+                    "lapStartTime": lap_start_time,
+                    "compound": compound_code(lap.get("Compound", "—")),
+                    "tyreAge": int(lap.get("TyreLife")) if pd.notna(lap.get("TyreLife")) else None,
+                    "position": int(lap.get("Position")) if pd.notna(lap.get("Position")) else None,
+                    "pitIn": pd.notna(lap.get("PitInTime")),
+                    "pitOut": pd.notna(lap.get("PitOutTime")),
+                }
+                lap_records.append(lap_record)
+
+                pit_in_abs = td_seconds(lap.get("PitInTime"))
+                pit_out_abs = td_seconds(lap.get("PitOutTime"))
+                if pit_in_abs is not None or pit_out_abs is not None:
+                    pit_stops.append({
+                        "driver": drv_code,
+                        "team": drv_info["team"],
+                        "lap": lap_no,
+                        "compound": compound_code(lap.get("Compound", "—")),
+                        "entryTime": round(max(0.0, pit_in_abs - session_time_zero), 3) if pit_in_abs is not None else None,
+                        "exitTime": round(max(0.0, pit_out_abs - session_time_zero), 3) if pit_out_abs is not None else None,
+                        "duration": round(max(0.0, pit_out_abs - pit_in_abs), 3) if pit_in_abs is not None and pit_out_abs is not None else None,
+                    })
+    except Exception as e:
+        print(f"⚠   Lap timing extraction partial: {e}")
+
+    lap_records.sort(
+        key=lambda record: (
+            record["sessionTime"] if record["sessionTime"] is not None else float("inf"),
+            record["lap"],
+            record["driver"],
+        )
+    )
+    pit_stops.sort(
+        key=lambda stop: (
+            stop["entryTime"] if stop["entryTime"] is not None else float("inf"),
+            stop["lap"],
+            stop["driver"],
+        )
+    )
 
     # ── Fastest lap overall ───────────────────────────────────────────────────
     fastest_lap = {"driver": "—", "time": "—", "lap": 0}
@@ -318,15 +443,12 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
                 print(f"   ⚠  {drv_info['code']}: {ex}")
 
         if all_pos:
-            # Normalize all timestamps to start from 0 (race start)
-            # SessionTime includes formation lap etc, so find true min
-            t_min = min(v["t"].min() for v in all_pos.values())
-            t_end = max(v["t"].max() for v in all_pos.values())
-            # Shift all time arrays to be 0-based
+            # Normalize all timestamps to the same zero-point used by lap
+            # records and events.
             for code in all_pos:
-                all_pos[code]["t"] = all_pos[code]["t"] - t_min
+                all_pos[code]["t"] = np.maximum(0.0, all_pos[code]["t"] - session_time_zero)
 
-            t_duration = t_end - t_min
+            t_duration = max(v["t"].max() for v in all_pos.values())
             FRAME_INTERVAL = 1.0  # 1 frame per second
             sampled_times = np.arange(0, t_duration, FRAME_INTERVAL)
 
@@ -378,19 +500,23 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
                 else:
                     etype = "incident"
 
-                events.append({
+                event_time = td_seconds(msg.get("Time"))
+                event_item = {
                     "lap":     lap_no,
                     "type":    etype,
                     "message": msg_text[:120],
                     "driver":  str(msg.get("Driver", "")),
-                })
+                }
+                if event_time is not None:
+                    event_item["sessionTime"] = round(max(0.0, event_time - session_time_zero), 3)
+                events.append(event_item)
     except Exception as e:
         print(f"⚠   Race control events partial: {e}")
 
     # Add a race start event
     events.insert(0, {
         "lap": 1, "type": "start",
-        "message": "Lights out and away we go!", "driver": ""
+        "message": "Lights out and away we go!", "driver": "", "sessionTime": 0.0
     })
 
     # ── Weather ───────────────────────────────────────────────────────────────
@@ -427,10 +553,13 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
         },
         "drivers":     drivers_out,
         "pitHistory":  pit_history,
+        "pitStops":    pit_stops,
         "strategy":    strategy,
+        "laps":        lap_records,
         "fastestLap":  fastest_lap,
         "topSpeeds":   top_speeds[:10],
         "events":      events,
+        "timeline":    events,
         "frames":      frames,   # real X/Y positions per timestamp
     }
 
