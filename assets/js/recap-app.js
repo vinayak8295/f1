@@ -28,6 +28,11 @@ let liveTrackLastReplayTime = null;
 let liveTrackDirectionScore = 0;
 let liveStandingsPrevOrderCodes = [];
 const liveLapCorrectionByCode = new Map();
+let leaderboardGapModeElapsedMs = 0;
+let leaderboardGapModeLastTickMs = null;
+
+const LEADERBOARD_INTERVAL_MODE_MS = 30000;
+const LEADERBOARD_LEADER_MODE_MS = 10000;
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
@@ -187,14 +192,57 @@ function formatLeaderboardLapDelta(laps) {
   return count === 1 ? '+1 LAP' : `+${count} LAPS`;
 }
 
+function formatLeaderboardParsedGap(parsedGap) {
+  const parsed = parsedGap || { kind: 'unknown', raw: '—' };
+  if (parsed.kind === 'leader') return 'LEADER';
+  if (parsed.kind === 'time') return formatLeaderboardIntervalSeconds(parsed.seconds);
+  if (parsed.kind === 'laps') return formatLeaderboardLapDelta(parsed.laps || 1);
+  return parsed.raw || '—';
+}
+
+function formatLiveLeaderboardGap(fracBehind) {
+  const delta = Math.max(0, Number(fracBehind) || 0);
+  const lapThreshold = 1.05;
+  if (delta >= lapThreshold) {
+    return formatLeaderboardLapDelta(Math.max(1, Math.floor(delta + 0.02)));
+  }
+  return formatLeaderboardIntervalSeconds(delta * 85);
+}
+
+function updateLeaderboardGapModeClock() {
+  if (!isPlaying) {
+    leaderboardGapModeLastTickMs = null;
+    return;
+  }
+
+  const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  if (leaderboardGapModeLastTickMs !== null) {
+    leaderboardGapModeElapsedMs += Math.max(0, Math.min(250, nowMs - leaderboardGapModeLastTickMs));
+  }
+  leaderboardGapModeLastTickMs = nowMs;
+}
+
+function getLeaderboardGapMode() {
+  const cycleMs = LEADERBOARD_INTERVAL_MODE_MS + LEADERBOARD_LEADER_MODE_MS;
+  const phaseMs = leaderboardGapModeElapsedMs % cycleMs;
+  return phaseMs < LEADERBOARD_INTERVAL_MODE_MS ? 'interval' : 'leader';
+}
+
+function getLeaderboardGapModeLabel(mode = getLeaderboardGapMode()) {
+  return mode === 'leader' ? 'TO LEADER' : 'INTERVAL';
+}
+
 function convertLeaderGapsToIntervals(drivers) {
   if (!Array.isArray(drivers) || !drivers.length) return [];
 
   return drivers.map((driver, index) => {
-    if (index === 0) return { ...driver, gap: 'LEADER' };
+    const currentGap = parseLeaderboardGapValue(driver?.gap);
+    const gapLeader = formatLeaderboardParsedGap(currentGap);
+    if (index === 0) {
+      return { ...driver, gap: 'LEADER', gapAhead: 'LEADER', gapLeader: 'LEADER' };
+    }
 
     const prevGap = parseLeaderboardGapValue(drivers[index - 1]?.gap);
-    const currentGap = parseLeaderboardGapValue(driver?.gap);
     let nextGap = currentGap.raw || '—';
 
     if (currentGap.kind === 'time' && (prevGap.kind === 'leader' || prevGap.kind === 'time')) {
@@ -210,8 +258,18 @@ function convertLeaderGapsToIntervals(drivers) {
       nextGap = currentGap.raw;
     }
 
-    return { ...driver, gap: nextGap };
+    return { ...driver, gap: nextGap, gapAhead: nextGap, gapLeader };
   });
+}
+
+function applyLeaderboardGapModeToStandings(drivers, mode = getLeaderboardGapMode()) {
+  if (!Array.isArray(drivers)) return [];
+  return drivers.map((driver, index) => ({
+    ...driver,
+    gap: index === 0
+      ? 'LEADER'
+      : (mode === 'leader' ? (driver.gapLeader || driver.gap || '—') : (driver.gapAhead || driver.gap || '—'))
+  }));
 }
 
 function formatLapTimeValue(value) {
@@ -494,7 +552,9 @@ function initRecap() {
   buildTimelineMarkers();
 
   // Initial timing tower
-  safeRenderTimingTower();
+  const initialTowerLap = document.getElementById('tvTowerLap');
+  if (initialTowerLap) initialTowerLap.textContent = `LAP 0 / ${totalLaps} · ${getLeaderboardGapModeLabel()}`;
+  safeRenderTimingTower(undefined, { displayLap: 0, gapMode: getLeaderboardGapMode() });
 
   // Track
   let trackReady = true;
@@ -529,6 +589,8 @@ function resetLeaderboardState() {
   leaderboardLastAnimatedSwapKey = '';
   leaderboardLastAnimatedSwapAt = 0;
   timingBaselinePosByCode = {};
+  leaderboardGapModeElapsedMs = 0;
+  leaderboardGapModeLastTickMs = null;
 
   leaderboardChangeTimers.forEach(timer => clearTimeout(timer));
   leaderboardChangeTimers.clear();
@@ -1060,23 +1122,29 @@ function setActiveLapChip(lapNumber) {
   }
 }
 
-function safeRenderTimingTower(drivers) {
+function safeRenderTimingTower(drivers, opts = {}) {
   try {
-    renderTimingTower(drivers);
+    renderTimingTower(drivers, opts);
   } catch (err) {
     console.error('Timing tower render failed:', err);
   }
 }
 
-function renderTimingTower(drivers) {
+function renderTimingTower(drivers, opts = {}) {
   const container = document.getElementById('tvTimingRows');
   if (!container || !raceData) return;
   drivers = drivers || raceData.drivers || [];
   const spriteMap = (typeof TEAM_SPRITE_PATHS !== 'undefined' && TEAM_SPRITE_PATHS) ? TEAM_SPRITE_PATHS : {};
+  const gapMode = opts.gapMode || getLeaderboardGapMode();
+  const uptoLap = Number.isFinite(Number(opts.displayLap)) ? Number(opts.displayLap) : lapValueToCurrentLap(currentLap);
+  const pitCounts = getPitStopCountsByDriver(uptoLap);
   const nextBaseline = { ...timingBaselinePosByCode };
 
   container.innerHTML = drivers.slice(0, 20).map((d, i) => {
-    const gapRaw = String(d.gap || '').trim();
+    const gapSource = i === 0
+      ? 'LEADER'
+      : (gapMode === 'leader' ? (d.gapLeader || d.gap || '—') : (d.gapAhead || d.gap || '—'));
+    const gapRaw = String(gapSource || '').trim();
     const isOut = /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw) || /RETIRED/i.test(gapRaw);
     const rowClass = `${i === 0 ? 'tt-leader' : ''} ${isOut ? 'tt-out' : ''}`.trim();
     const gapLabel = i === 0 ? 'Leader' : (isOut ? 'Out' : (gapRaw || '—'));
@@ -1084,16 +1152,23 @@ function renderTimingTower(drivers) {
     const code = normalizeDriverCode(d.code) || '---';
     const tyre = /^[SMHIW]$/i.test(String(d.tyre || '').trim()) ? String(d.tyre).trim().toUpperCase() : '';
     const currPos = Number(d.pos);
-
     if (code !== '---' && !(code in nextBaseline) && Number.isFinite(currPos) && currPos > 0 && isPlaying) {
-      // Baseline for "positions gained/lost": first stable order after the recap starts.
       nextBaseline[code] = currPos;
     }
-
     const basePos = Number(nextBaseline[code]);
     const delta = (Number.isFinite(currPos) && Number.isFinite(basePos) && basePos > 0) ? (basePos - currPos) : 0;
-    const indText = delta > 0 ? `▲${delta}` : (delta < 0 ? `▼${Math.abs(delta)}` : '');
-    const indClass = delta > 0 ? 'up' : (delta < 0 ? 'down' : '');
+    const moveText = delta > 0 ? `▲${delta}` : (delta < 0 ? `▼${Math.abs(delta)}` : '');
+    const moveClass = delta > 0 ? 'up' : (delta < 0 ? 'down' : '');
+    const pitStops = pitCounts[code] || 0;
+    const pitText = `P${pitStops}`;
+    const pitClass = pitStops > 0 ? 'has-pits' : 'no-pits';
+    const sideClass = gapMode === 'leader'
+      ? `tt-ind tt-pits ${pitClass}`
+      : `tt-move ${moveClass}`;
+    const sideText = gapMode === 'leader' ? pitText : moveText;
+    const sideTitle = gapMode === 'leader'
+      ? `Pit stops: ${pitStops}`
+      : 'Positions gained/lost';
     const teamPath = spriteMap[d.team]
       || (typeof teamSlug === 'function' ? `assets/sprites/cars/teams/${teamSlug(d.team)}.png` : '')
       || '';
@@ -1109,7 +1184,7 @@ function renderTimingTower(drivers) {
           ${tyre ? `<span class="tt-tyre tt-tyre-${tyre}" title="Current tyre: ${tyre}">${tyre}</span>` : ''}
         </span>
         <span class="tt-gap ${i===0?'leader-gap':''} ${isOut?'out-gap':''}">${gapLabel}</span>
-        <span class="tt-ind ${indClass}">${indText}</span>
+        <span class="${sideClass}" title="${sideTitle}">${sideText}</span>
       </div>`;
   }).join('');
 
@@ -3601,27 +3676,17 @@ function getLiveStandings(lap) {
   });
 
   liveStandingsPrevOrderCodes = ordered.map(item => item.code);
+  const leaderScore = ordered[0].score;
 
   return ordered.map((item, i) => {
     const d = item.driver;
-    let gap;
-    if (i === 0) {
-      gap = 'LEADER';
-    } else {
-      const aheadScore = ordered[i - 1].score;
-      const fracBehind = Math.max(0, aheadScore - item.score);
-      // 1 full lap ≈ 70–100s in F1; use 85s as a reasonable average.
-      // Intervals are now shown to the car ahead, not the leader.
-      const secsBehind = fracBehind * 85;
-      const lapThreshold = 1.05;
-      if (fracBehind >= lapThreshold) {
-        const wholeLaps = Math.max(1, Math.floor(fracBehind + 0.02));
-        gap = formatLeaderboardLapDelta(wholeLaps);
-      } else {
-        gap = formatLeaderboardIntervalSeconds(secsBehind);
-      }
-    }
-    return { ...d, pos: i + 1, gap };
+    const gapAhead = i === 0
+      ? 'LEADER'
+      : formatLiveLeaderboardGap(ordered[i - 1].score - item.score);
+    const gapLeader = i === 0
+      ? 'LEADER'
+      : formatLiveLeaderboardGap(leaderScore - item.score);
+    return { ...d, pos: i + 1, gap: gapAhead, gapAhead, gapLeader };
   });
 }
 
@@ -3629,6 +3694,8 @@ function updatePlayback(lap) {
   const lapValue = clampLapValue(lap);
   currentLap = lapValue;
   const displayLap = lapValueToCurrentLap(lapValue);
+  updateLeaderboardGapModeClock();
+  const gapMode = getLeaderboardGapMode();
 
   // Header badge
   document.getElementById('headerLapBadge').textContent = `LAP ${displayLap} / ${totalLaps}`;
@@ -3639,7 +3706,7 @@ function updatePlayback(lap) {
   const tvTowerLap = document.getElementById('tvTowerLap');
   if (tvCur) tvCur.textContent = displayLap;
   if (tvReadout) tvReadout.textContent = `LAPS ${displayLap} / ${totalLaps}`;
-  if (tvTowerLap) tvTowerLap.textContent = `LAP ${displayLap} / ${totalLaps}`;
+  if (tvTowerLap) tvTowerLap.textContent = `LAP ${displayLap} / ${totalLaps} · ${getLeaderboardGapModeLabel(gapMode)}`;
 
   // Race clock — use real replayTime if available, else estimate
   let elapsed;
@@ -3664,9 +3731,10 @@ function updatePlayback(lap) {
 
   // Update timing tower and ORDER tab with live standings
   const standings = getLiveStandings(Math.max(1, displayLap));
+  const displayStandings = applyLeaderboardGapModeToStandings(standings, gapMode);
   updateTrackBattleEffects(standings);
-  safeRenderTimingTower(standings);
-  renderLiveLeaderboard(standings, displayLap);
+  safeRenderTimingTower(standings, { displayLap, gapMode });
+  renderLiveLeaderboard(displayStandings, displayLap);
   updateBroadcastInfoPanel(lapValue, displayLap);
 
   // Sync tyre on canvas car objects
@@ -3713,6 +3781,7 @@ function startPlay() {
   if (!usingRealData && currentLap >= totalLaps) currentLap = 0;
 
   isPlaying = true;
+  leaderboardGapModeLastTickMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   document.getElementById('playBtn').textContent = '⏸';
   document.getElementById('playBtn').classList.add('active');
 
@@ -3747,6 +3816,7 @@ function startPlay() {
 
 function pausePlay() {
   isPlaying = false;
+  leaderboardGapModeLastTickMs = null;
   clearInterval(playTimer);
   document.getElementById('playBtn').textContent = '▶';
   document.getElementById('playBtn').classList.remove('active');
