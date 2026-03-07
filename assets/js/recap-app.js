@@ -153,6 +153,67 @@ function parseTimeValueToSeconds(value) {
   return null;
 }
 
+function parseLeaderboardGapValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return { kind: 'unknown', raw: '—' };
+  const upper = raw.toUpperCase();
+
+  if (upper === 'LEADER') return { kind: 'leader', raw, seconds: 0, laps: 0 };
+  if (upper === 'LAPPED') return { kind: 'laps', raw, laps: 1 };
+  if (/^(DNF|DNS|DSQ|RET|OUT)$/i.test(upper)) return { kind: 'status', raw };
+
+  const lapMatch = upper.match(/^\+?\s*(\d+)\s+LAP(?:S)?$/);
+  if (lapMatch) {
+    return { kind: 'laps', raw, laps: Number(lapMatch[1]) || 0 };
+  }
+
+  const seconds = parseTimeValueToSeconds(
+    raw.replace(/^\+/, '').replace(/s$/i, '')
+  );
+  if (Number.isFinite(seconds)) {
+    return { kind: 'time', raw, seconds };
+  }
+
+  return { kind: 'raw', raw };
+}
+
+function formatLeaderboardIntervalSeconds(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  return `+${value.toFixed(1)}s`;
+}
+
+function formatLeaderboardLapDelta(laps) {
+  const count = Math.max(1, Math.floor(Number(laps) || 0));
+  return count === 1 ? '+1 LAP' : `+${count} LAPS`;
+}
+
+function convertLeaderGapsToIntervals(drivers) {
+  if (!Array.isArray(drivers) || !drivers.length) return [];
+
+  return drivers.map((driver, index) => {
+    if (index === 0) return { ...driver, gap: 'LEADER' };
+
+    const prevGap = parseLeaderboardGapValue(drivers[index - 1]?.gap);
+    const currentGap = parseLeaderboardGapValue(driver?.gap);
+    let nextGap = currentGap.raw || '—';
+
+    if (currentGap.kind === 'time' && (prevGap.kind === 'leader' || prevGap.kind === 'time')) {
+      nextGap = formatLeaderboardIntervalSeconds(currentGap.seconds - (prevGap.seconds || 0));
+    } else if (currentGap.kind === 'laps') {
+      if (prevGap.kind === 'laps') {
+        const lapDelta = (currentGap.laps || 0) - (prevGap.laps || 0);
+        nextGap = lapDelta > 0 ? formatLeaderboardLapDelta(lapDelta) : currentGap.raw;
+      } else {
+        nextGap = formatLeaderboardLapDelta(currentGap.laps || 1);
+      }
+    } else if (currentGap.kind === 'status') {
+      nextGap = currentGap.raw;
+    }
+
+    return { ...driver, gap: nextGap };
+  });
+}
+
 function formatLapTimeValue(value) {
   if (value == null) return '—';
   if (typeof value === 'string') {
@@ -3402,7 +3463,7 @@ function getLiveStandings(lap) {
   }));
 
   if (!usingRealData || !replayFrames.length || replayTime < 1) {
-    return withTyre;
+    return convertLeaderGapsToIntervals(withTyre);
   }
 
   if (liveTrackLastReplayTime !== null) {
@@ -3541,25 +3602,23 @@ function getLiveStandings(lap) {
 
   liveStandingsPrevOrderCodes = ordered.map(item => item.code);
 
-  const leaderScore = ordered[0].score;
-
   return ordered.map((item, i) => {
     const d = item.driver;
     let gap;
     if (i === 0) {
       gap = 'LEADER';
     } else {
-      const fracBehind = Math.max(0, leaderScore - item.score);
-      // 1 full lap ≈ 70–100s in F1; use 85s as a reasonable average
+      const aheadScore = ordered[i - 1].score;
+      const fracBehind = Math.max(0, aheadScore - item.score);
+      // 1 full lap ≈ 70–100s in F1; use 85s as a reasonable average.
+      // Intervals are now shown to the car ahead, not the leader.
       const secsBehind = fracBehind * 85;
-      // Mark as lapped only when the model indicates at least ~1 full lap behind.
-      // This avoids false "LAPPED" labels early in the race.
       const lapThreshold = 1.05;
       if (fracBehind >= lapThreshold) {
         const wholeLaps = Math.max(1, Math.floor(fracBehind + 0.02));
-        gap = wholeLaps === 1 ? '+1 LAP' : `+${wholeLaps} LAPS`;
+        gap = formatLeaderboardLapDelta(wholeLaps);
       } else {
-        gap = `+${secsBehind.toFixed(1)}s`;
+        gap = formatLeaderboardIntervalSeconds(secsBehind);
       }
     }
     return { ...d, pos: i + 1, gap };
