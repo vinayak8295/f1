@@ -308,7 +308,7 @@ function updateBroadcastInfoPanel(lapValue, displayLap) {
       ? (type === 'dnf' ? 'CAR OUT' : 'INCIDENT NOTED')
       : 'TRACK CLEAR';
     incidentMetaEl.textContent = hasIncident
-      ? trimInfoText(formatRaceControlMessage(latestVisibleIncident.message), 68)
+      ? formatRaceControlMessage(latestVisibleIncident.message)
       : 'NO INCIDENTS REPORTED';
   }
 }
