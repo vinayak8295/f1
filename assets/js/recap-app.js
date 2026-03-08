@@ -1447,8 +1447,8 @@ const SECTOR_SPLITS = [0.32, 0.65];
 let DRS_ZONES = [{ start:0.88, end:0.05 }, { start:0.52, end:0.62 }];
 const TRACK_EDGE_PADDING_CSS = 58; // Smaller padding so the track occupies more viewport area.
 const TRACK_WIDTH_MULT = 1.48;     // Wider visual track for better racing room.
-const CAR_VISUAL_SCALE = 1.3;      // Larger cars while preserving proportions.
-const CAR_GAP_MULT = 4.8;          // Front/back spacing multiplier (recommended: 1.0–8.0).
+const CAR_VISUAL_SCALE = 1.1;     // Slightly smaller cars so dense packs stay readable.
+const CAR_GAP_MULT = 5;          // Stronger front/back spacing for cleaner visual separation.
 const CAR_LENGTH_SCALE = 0.88;     // <1 makes cars visually shorter length-wise.
 const CAR_BRIGHTNESS = 1.18;       // Global brightness boost for car visibility.
 
@@ -3092,7 +3092,7 @@ function spawnCars() {
 
   } else {
     // ── SYNTHETIC MODE: path-based animation ─────────────────────
-    const spacing = totalPts * 0.066;
+    const spacing = totalPts * 0.082;
     trackCars = drivers.map((d, i) => {
       const baseSpd = 68 - i * 0.5;
       return {
@@ -3408,9 +3408,9 @@ function drawCar(ctx, cx, cy, angle, car, isLeader) {
 
 function applyOvertakeLaneOffsets(cars, dt) {
   const gapMult = Math.max(1, Math.min(CAR_GAP_MULT, 8));
-  const minSep = 48 * CAR_VISUAL_SCALE; // local collision relief distance
-  const laneMax = 14 * CAR_VISUAL_SCALE; // keep width-wise motion subtle
-  const orderLongGap = 36 * CAR_VISUAL_SCALE * gapMult; // requested front/back gap
+  const minSep = 58 * CAR_VISUAL_SCALE; // local collision relief distance
+  const laneMax = 16 * CAR_VISUAL_SCALE; // keep width-wise motion subtle
+  const orderLongGap = 40 * CAR_VISUAL_SCALE * gapMult; // requested front/back gap
   const longMax = Math.max(88 * CAR_VISUAL_SCALE, orderLongGap * 1.55); // don't cap away user gap
   const iterations = 4;
   const eps = 1e-3;
@@ -3425,7 +3425,7 @@ function applyOvertakeLaneOffsets(cars, dt) {
   // Deterministic lane staggering helps corner packs before repulsion kicks in.
   const posOrder = [...cars].sort((a, b) => (a.pos || 999) - (b.pos || 999));
   posOrder.forEach((car, i) => {
-    const laneSeed = ((i % 3) - 1) * 2.2 * CAR_VISUAL_SCALE;
+    const laneSeed = ((i % 3) - 1) * 3.2 * CAR_VISUAL_SCALE;
     const nx = -Math.sin(car.angle || 0);
     const ny = Math.cos(car.angle || 0);
     car._rx += nx * laneSeed;
@@ -3512,8 +3512,10 @@ function applyOvertakeLaneOffsets(cars, dt) {
     const vx = -uy;
     const vy = ux;
 
-    const laneHard = (11 + 1.5 * (1 - cornerFactor)) * TRACK_WIDTH_MULT;
-    const longHard = (42 - 18 * cornerFactor) * CAR_VISUAL_SCALE;
+    const laneHard = (12 + 2.0 * (1 - cornerFactor)) * TRACK_WIDTH_MULT;
+    const straightLongHard = 78 * CAR_VISUAL_SCALE;
+    const cornerLongHard = 30 * CAR_VISUAL_SCALE;
+    const longHard = straightLongHard - (straightLongHard - cornerLongHard) * Math.min(1, cornerFactor * 1.08);
 
     const rx = targetX - base[0];
     const ry = targetY - base[1];
@@ -3521,6 +3523,30 @@ function applyOvertakeLaneOffsets(cars, dt) {
     const pLong = Math.max(-longHard, Math.min(longHard, rx * ux + ry * uy));
     targetX = base[0] + vx * pLat + ux * pLong;
     targetY = base[1] + vy * pLat + uy * pLong;
+
+    // Final corridor snap: project onto the nearest real track point so
+    // spacing survives on straights but cars cannot cut far outside corners.
+    const snapIdx = findNearestTrackIndex(targetX, targetY, idx);
+    const snapBase = trackPath[snapIdx] || base;
+    const snapPrev = trackPath[(snapIdx - 2 + N) % N] || snapBase;
+    const snapNext = trackPath[(snapIdx + 2) % N] || snapBase;
+    const stx = snapNext[0] - snapPrev[0];
+    const sty = snapNext[1] - snapPrev[1];
+    const sLen = Math.hypot(stx, sty) || 1;
+    const sux = stx / sLen;
+    const suy = sty / sLen;
+    const svx = -suy;
+    const svy = sux;
+    const snapTurn = Math.abs(normalizeAngle(Math.atan2(snapNext[1] - snapBase[1], snapNext[0] - snapBase[0]) - Math.atan2(snapBase[1] - snapPrev[1], snapBase[0] - snapPrev[0])));
+    const snapCornerFactor = Math.min(1, snapTurn / 0.85);
+    const snapLaneHard = (9.5 + 1.8 * (1 - snapCornerFactor)) * TRACK_WIDTH_MULT;
+    const snapLongHard = (10 + 8 * (1 - snapCornerFactor)) * CAR_VISUAL_SCALE;
+    const sdx = targetX - snapBase[0];
+    const sdy = targetY - snapBase[1];
+    const sLat = Math.max(-snapLaneHard, Math.min(snapLaneHard, sdx * svx + sdy * svy));
+    const sLong = Math.max(-snapLongHard, Math.min(snapLongHard, sdx * sux + sdy * suy));
+    targetX = snapBase[0] + svx * sLat + sux * sLong;
+    targetY = snapBase[1] + svy * sLat + suy * sLong;
 
     if (!Number.isFinite(car.renderX) || !Number.isFinite(car.renderY)) {
       car.renderX = targetX;
