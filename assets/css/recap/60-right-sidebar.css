@@ -77,6 +77,20 @@
   }
 
   .lb-row:hover { background: var(--bg-highlight); }
+  .lb-row.lb-out {
+    opacity: 0.58;
+  }
+
+  .lb-row.lb-out .lb-driver-photo {
+    filter: grayscale(0.2);
+  }
+
+  .lb-row.lb-out .lb-pos-num,
+  .lb-row.lb-out .lb-driver-code,
+  .lb-row.lb-out .lb-team,
+  .lb-row.lb-out .lb-pit-count {
+    color: rgba(255,255,255,0.62);
+  }
   .lb-thead span:nth-child(2) { text-align: center; }
   .lb-thead span:nth-child(5) { text-align: right; }
 
@@ -211,6 +225,7 @@
 
   .lb-pit-count.has-pits { color: var(--accent-yellow); font-weight: 700; }
   .lb-gap-col.gap-0 { color: var(--accent-green); font-weight: 700; }
+  .lb-gap-col.lb-gap-out { color: rgba(255,255,255,0.72); font-weight: 700; }
 
   /* Tire badge */
   .tire-badge {

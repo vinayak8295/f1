@@ -30,6 +30,7 @@ let liveStandingsPrevOrderCodes = [];
 const liveLapCorrectionByCode = new Map();
 let leaderboardGapModeElapsedMs = 0;
 let leaderboardGapModeLastTickMs = null;
+let driverRetirementInfoByCode = new Map();
 
 const LEADERBOARD_INTERVAL_MODE_MS = 30000;
 const LEADERBOARD_LEADER_MODE_MS = 10000;
@@ -174,6 +175,7 @@ function parseLeaderboardGapValue(value) {
   if (upper === 'LEADER') return { kind: 'leader', raw, seconds: 0, laps: 0 };
   if (upper === 'LAPPED') return { kind: 'laps', raw, laps: 1 };
   if (/^(DNF|DNS|DSQ|RET|OUT)$/i.test(upper)) return { kind: 'status', raw };
+  if (/NAN/i.test(upper)) return { kind: 'status', raw: 'DNF' };
 
   const lapMatch = upper.match(/^\+?\s*(\d+)\s+LAP(?:S)?$/);
   if (lapMatch) {
@@ -188,6 +190,209 @@ function parseLeaderboardGapValue(value) {
   }
 
   return { kind: 'raw', raw };
+}
+
+function normalizeRetirementStatus(value) {
+  const upper = String(value || '').trim().toUpperCase();
+  if (/^(DNS|DSQ|RET|OUT)$/i.test(upper)) return upper;
+  return 'DNF';
+}
+
+function isRetirementLikeEvent(event) {
+  const type = String(event?.type || '').trim().toLowerCase();
+  if (type === 'dnf') return true;
+
+  const text = [
+    event?.message,
+    event?.title,
+    event?.status,
+    event?.note
+  ].filter(Boolean).join(' ').toUpperCase();
+
+  return /\b(DNF|DNS|DSQ|RET|OUT)\b/.test(text)
+    || /\bRETI(?:RED|RES|REMENT)\b/.test(text)
+    || /\bDID NOT FINISH\b/.test(text)
+    || /\bCAR OUT\b/.test(text);
+}
+
+function deriveDriverRetirementInfo() {
+  const infoByCode = new Map();
+  const lastLapByCode = new Map();
+  const lapSummaryByCode = new Map();
+  const lapRows = Array.isArray(raceData?.laps) ? raceData.laps : [];
+
+  lapRows.forEach(record => {
+    const code = normalizeDriverCode(record?.code || record?.driver);
+    if (!code) return;
+    const summary = lapSummaryByCode.get(code) || { count: 0, hasTimedLap: false };
+    summary.count += 1;
+    const lapTimeSec = parseTimeValueToSeconds(record?.lapTime);
+    if (Number.isFinite(lapTimeSec) && lapTimeSec > 0) summary.hasTimedLap = true;
+    lapSummaryByCode.set(code, summary);
+    const prev = lastLapByCode.get(code);
+    const prevLap = Number(prev?.lap) || 0;
+    const nextLap = Number(record?.lap) || 0;
+    const prevTime = parseTimeValueToSeconds(prev?.sessionTime);
+    const nextTime = parseTimeValueToSeconds(record?.sessionTime);
+    const shouldReplace = !prev
+      || nextLap > prevLap
+      || (nextLap === prevLap && Number.isFinite(nextTime) && (!Number.isFinite(prevTime) || nextTime > prevTime));
+    if (shouldReplace) lastLapByCode.set(code, record);
+  });
+
+  const frameSummaryByCode = new Map();
+  const frameRows = Array.isArray(raceData?.frames) ? raceData.frames : [];
+  frameRows.forEach(frame => {
+    const cars = frame?.cars || {};
+    Object.entries(cars).forEach(([rawCode, car]) => {
+      const code = normalizeDriverCode(rawCode);
+      if (!code) return;
+      const summary = frameSummaryByCode.get(code) || { count: 0, first: null, last: null };
+      const point = { x: Number(car?.x), y: Number(car?.y) };
+      summary.count += 1;
+      if (!summary.first && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+        summary.first = point;
+      }
+      if (Number.isFinite(point.x) && Number.isFinite(point.y)) {
+        summary.last = point;
+      }
+      frameSummaryByCode.set(code, summary);
+    });
+  });
+
+  const mergeRetirementInfo = (code, partial) => {
+    const driverCode = normalizeDriverCode(code);
+    if (!driverCode) return;
+    const prev = infoByCode.get(driverCode) || null;
+    const nextTime = parseTimeValueToSeconds(partial?.sessionTime);
+    const prevTime = parseTimeValueToSeconds(prev?.sessionTime);
+    const nextLap = Number(partial?.lap);
+    const prevLap = Number(prev?.lap);
+
+    infoByCode.set(driverCode, {
+      code: driverCode,
+      status: normalizeRetirementStatus(partial?.status || prev?.status),
+      lap: Number.isFinite(nextLap) && nextLap > 0 ? nextLap : (Number.isFinite(prevLap) && prevLap > 0 ? prevLap : null),
+      sessionTime: Number.isFinite(nextTime) ? nextTime : (Number.isFinite(prevTime) ? prevTime : null),
+      source: partial?.source || prev?.source || 'derived',
+      message: partial?.message || prev?.message || '',
+    });
+  };
+
+  const eventSources = []
+    .concat(Array.isArray(raceData?.events) ? raceData.events : [])
+    .concat(Array.isArray(raceData?.timeline) ? raceData.timeline : []);
+
+  eventSources.forEach(event => {
+    if (!isRetirementLikeEvent(event)) return;
+    const code = normalizeDriverCode(event?.driver);
+    if (!code) return;
+    mergeRetirementInfo(code, {
+      status: event?.status || (String(event?.type || '').toLowerCase() === 'dnf' ? 'DNF' : 'OUT'),
+      lap: event?.lap,
+      sessionTime: event?.sessionTime,
+      source: 'event',
+      message: event?.message || event?.title || ''
+    });
+  });
+
+  (Array.isArray(raceData?.drivers) ? raceData.drivers : []).forEach(driver => {
+    const code = normalizeDriverCode(driver?.code);
+    if (!code) return;
+
+    const gapRaw = String(driver?.gap || '').trim();
+    const hasExplicitStatus = /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw);
+    const hasInvalidGap = /nan/i.test(gapRaw);
+    if (!hasExplicitStatus && !hasInvalidGap) return;
+
+    const lastLap = lastLapByCode.get(code);
+    const lapSummary = lapSummaryByCode.get(code) || { count: 0, hasTimedLap: false };
+    const frameSummary = frameSummaryByCode.get(code) || { count: 0, first: null, last: null };
+    const dx = Number(frameSummary?.last?.x) - Number(frameSummary?.first?.x);
+    const dy = Number(frameSummary?.last?.y) - Number(frameSummary?.first?.y);
+    const frameTravel = (Number.isFinite(dx) && Number.isFinite(dy)) ? Math.hypot(dx, dy) : null;
+    const noFrameData = (frameSummary.count || 0) === 0;
+    const incompleteOpeningLap = (lapSummary.count || 0) <= 1 && !lapSummary.hasTimedLap;
+    const effectivelyStaticFrames = Number.isFinite(frameTravel) && frameTravel < 0.001;
+    const earlyRetirement = hasInvalidGap && (noFrameData || (incompleteOpeningLap && effectivelyStaticFrames));
+
+    mergeRetirementInfo(code, {
+      status: hasExplicitStatus ? gapRaw : 'DNF',
+      lap: earlyRetirement ? 1 : lastLap?.lap,
+      sessionTime: earlyRetirement ? 0 : lastLap?.sessionTime,
+      source: hasExplicitStatus ? 'result-status' : (earlyRetirement ? 'result-gap-early' : 'result-gap'),
+      message: hasExplicitStatus ? gapRaw.toUpperCase() : 'INVALID FINAL GAP'
+    });
+  });
+
+  return infoByCode;
+}
+
+function getDriverRetirementInfo(code) {
+  return driverRetirementInfoByCode.get(normalizeDriverCode(code)) || null;
+}
+
+function getDriverRetirementStatus(code) {
+  const info = getDriverRetirementInfo(code);
+  return normalizeRetirementStatus(info?.status || 'DNF');
+}
+
+function isDriverRetiredAt(code, lapValue = currentLap, sessionTime = getPlaybackClockSeconds(lapValue)) {
+  const info = getDriverRetirementInfo(code);
+  if (!info) return false;
+
+  const retiredAtSec = parseTimeValueToSeconds(info.sessionTime);
+  if (Number.isFinite(retiredAtSec)) {
+    return sessionTime + 0.001 >= retiredAtSec;
+  }
+
+  const retiredLap = Number(info.lap);
+  if (Number.isFinite(retiredLap) && retiredLap > 0) {
+    return lapValueToCurrentLap(lapValue) >= retiredLap;
+  }
+
+  return false;
+}
+
+function mergeStandingsWithRetirements(activeStandings, allDrivers, lapValue) {
+  const lapClock = getPlaybackClockSeconds(lapValue);
+  const baseDrivers = Array.isArray(allDrivers) ? allDrivers : [];
+  const activeRows = (Array.isArray(activeStandings) ? activeStandings : [])
+    .filter(driver => !isDriverRetiredAt(driver?.code, lapValue, lapClock))
+    .map((driver, index) => ({ ...driver, pos: index + 1, retired: false }));
+
+  const activeCodes = new Set(activeRows.map(driver => normalizeDriverCode(driver.code)).filter(Boolean));
+
+  const missingActive = convertLeaderGapsToIntervals(
+    baseDrivers.filter(driver => {
+      const code = normalizeDriverCode(driver?.code);
+      return code && !activeCodes.has(code) && !isDriverRetiredAt(code, lapValue, lapClock);
+    })
+  ).map((driver, index) => ({
+    ...driver,
+    pos: activeRows.length + index + 1,
+    retired: false
+  }));
+
+  const retiredRows = baseDrivers
+    .filter(driver => {
+      const code = normalizeDriverCode(driver?.code);
+      return code && !activeCodes.has(code) && isDriverRetiredAt(code, lapValue, lapClock);
+    })
+    .map((driver, index) => {
+      const status = getDriverRetirementStatus(driver.code);
+      return {
+        ...driver,
+        pos: activeRows.length + missingActive.length + index + 1,
+        gap: status,
+        gapAhead: status,
+        gapLeader: status,
+        retired: true,
+        retirementStatus: status
+      };
+    });
+
+  return [...activeRows, ...missingActive, ...retiredRows];
 }
 
 function formatLeaderboardIntervalSeconds(seconds) {
@@ -504,6 +709,7 @@ function initRecap() {
   activeLapChip = 0;
   activeLapChipEl = null;
   resetLeaderboardState();
+  driverRetirementInfoByCode = deriveDriverRetirementInfo();
   currentCircuitUiConfig = resolveCircuitUiConfig();
   applyCircuitUiConfig(currentCircuitUiConfig);
 
@@ -771,11 +977,13 @@ function updateLeaderboardRow(row, driver, index, pitStops) {
   const driverCode = normalizeDriverCode(driver.code) || '---';
   const posClass = index === 0 ? 'p1' : index === 1 ? 'p2' : index === 2 ? 'p3' : '';
   const gapTxt = index === 0 ? 'LEADER' : (driver.gap || '—');
+  const isOut = !!driver.retired || /^(DNF|DNS|DSQ|RET|OUT)$/i.test(String(gapTxt).trim()) || /RETIRED/i.test(String(gapTxt));
   const tyre = driver.tyre && driver.tyre !== '—' ? String(driver.tyre).trim().toUpperCase() : '';
   const tyreClass = tyre.replace(/[^A-Z0-9_-]/g, '');
   const photoUrl = getDriverPhotoUrl(driver);
   const fallbackChar = (driverCode.replace(/[^A-Z0-9]/g, '').charAt(0) || '?');
 
+  row.classList.toggle('lb-out', isOut);
   parts.posNum.className = `lb-pos-num ${posClass}`.trim();
   parts.posNum.textContent = driver.pos;
 
@@ -809,9 +1017,10 @@ function updateLeaderboardRow(row, driver, index, pitStops) {
 
   parts.gap.textContent = gapTxt;
   parts.gap.classList.toggle('gap-0', index === 0);
+  parts.gap.classList.toggle('lb-gap-out', isOut && index !== 0);
 
-  parts.pits.textContent = pitStops;
-  parts.pits.classList.toggle('has-pits', pitStops > 0);
+  parts.pits.textContent = isOut ? '—' : pitStops;
+  parts.pits.classList.toggle('has-pits', !isOut && pitStops > 0);
 }
 
 function detectAdjacentSwap(prevOrder, nextOrder) {
@@ -1157,9 +1366,9 @@ function renderTimingTower(drivers, opts = {}) {
       ? 'LEADER'
       : (gapMode === 'leader' ? (d.gapLeader || d.gap || '—') : (d.gapAhead || d.gap || '—'));
     const gapRaw = String(gapSource || '').trim();
-    const isOut = /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw) || /RETIRED/i.test(gapRaw);
+    const isOut = !!d.retired || /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw) || /RETIRED/i.test(gapRaw);
     const rowClass = `${i === 0 ? 'tt-leader' : ''} ${isOut ? 'tt-out' : ''}`.trim();
-    const gapLabel = i === 0 ? 'Leader' : (isOut ? 'Out' : (gapRaw || '—'));
+    const gapLabel = i === 0 ? 'Leader' : (isOut ? (d.retirementStatus || gapRaw || 'DNF') : (gapRaw || '—'));
 
     const code = normalizeDriverCode(d.code) || '---';
     const tyre = /^[SMHIW]$/i.test(String(d.tyre || '').trim()) ? String(d.tyre).trim().toUpperCase() : '';
@@ -1271,8 +1480,8 @@ const CIRCUIT_UI_CONFIGS = {
   melbourne: {
     trackFit: {
       autoSafeZones: false,
-      safeZonesCss: { top: 70, right: 286, bottom: 92, left: 258 },
-      scaleMult: 1.12,
+      safeZonesCss: { top: 10, right: 300, bottom: 10, left: 220 },
+      scaleMult: 1.14,
       offsetXPct: 0.055,
       offsetYPct: 0.035,
     },
@@ -3493,8 +3702,21 @@ function startRenderLoop(canvas) {
     trailCtx.fillStyle = 'rgba(0,0,0,0.06)';
     trailCtx.fillRect(0, 0, W, H);
 
+    const replayLapValue = getReplayLapValue();
+    const replayClockSeconds = getPlaybackClockSeconds(replayLapValue);
+    trackCars.forEach(car => {
+      car._retired = isDriverRetiredAt(car.code, replayLapValue, replayClockSeconds);
+    });
+    const activeTrackCars = trackCars.filter(car => !car._retired);
+
     // ── Update & draw cars ────────────────────────────────────────
     trackCars.forEach(car => {
+      if (car._retired) {
+        car._pitState = null;
+        car._pitRender = null;
+        return;
+      }
+
       if (usingRealData) {
         // Direct frame index lookup — no binary search
         const fi = Math.min(Math.floor(replayTime), maxFrameIdx);
@@ -3555,18 +3777,23 @@ function startRenderLoop(canvas) {
     });
 
     // Give cars lateral room during close racing so overtakes are visible.
-    applyOvertakeLaneOffsets(trackCars, dt);
+    applyOvertakeLaneOffsets(activeTrackCars, dt);
 
-    const pitStates = getPitStatesForLap(getReplayLapValue());
+    const pitStates = getPitStatesForLap(replayLapValue);
     const pitStateByCode = new Map(pitStates.map(state => [state.code, state]));
     trackCars.forEach(car => {
+      if (car._retired) {
+        car._pitState = null;
+        car._pitRender = null;
+        return;
+      }
       const state = pitStateByCode.get(car.code);
       car._pitState = state || null;
       car._pitRender = state?.sample || null;
     });
 
     // Trail dots
-    trackCars.forEach(car => {
+    activeTrackCars.forEach(car => {
       const px = car._pitRender?.x ?? car.renderX;
       const py = car._pitRender?.y ?? car.renderY;
       trailCtx.save();
@@ -3584,7 +3811,7 @@ function startRenderLoop(canvas) {
     ctx.save(); ctx.globalAlpha = 0.55; ctx.drawImage(trailCanvas, 0, 0); ctx.restore();
 
     // Draw cars back→front
-    [...trackCars].sort((a,b) => b.pos - a.pos).forEach(car => {
+    [...activeTrackCars].sort((a,b) => b.pos - a.pos).forEach(car => {
       const px = car._pitRender?.x ?? car.renderX;
       const py = car._pitRender?.y ?? car.renderY;
       const pa = car._pitRender?.angle ?? car.angle;
@@ -3593,7 +3820,7 @@ function startRenderLoop(canvas) {
       }
     });
 
-    drawTrackBattleEffects(ctx, trackCars);
+    drawTrackBattleEffects(ctx, activeTrackCars);
 
     trackAnimFrame = requestAnimationFrame(frame);
   }
@@ -3833,8 +4060,11 @@ function getLiveStandings(lap) {
   }));
 
   if (!usingRealData || !replayFrames.length || replayTime < 1) {
-    return convertLeaderGapsToIntervals(withTyre);
+    return mergeStandingsWithRetirements(convertLeaderGapsToIntervals(withTyre), withTyre, lap);
   }
+
+  const lapClock = getPlaybackClockSeconds(lap);
+  const activeDrivers = withTyre.filter(d => !isDriverRetiredAt(d.code, lap, lapClock));
 
   if (liveTrackLastReplayTime !== null) {
     const dtReplay = replayTime - liveTrackLastReplayTime;
@@ -3854,7 +4084,7 @@ function getLiveStandings(lap) {
   // Build live position order from track progress
   const progress = [];
   let directionVote = 0;
-  withTyre.forEach(d => {
+  activeDrivers.forEach(d => {
     const code = normalizeDriverCode(d.code);
     const prev = liveTrackProgressState.get(code);
     const sample = getCarTrackProgress(code, {
@@ -3885,7 +4115,9 @@ function getLiveStandings(lap) {
     progress.push({ driver: d, code, scoreRaw: unwrappedProgress });
   });
 
-  if (progress.length < 2) return withTyre; // not enough data yet
+  if (progress.length < 2) {
+    return mergeStandingsWithRetirements(convertLeaderGapsToIntervals(activeDrivers), withTyre, lap);
+  }
 
   const referenceCodes = liveStandingsPrevOrderCodes.length
     ? liveStandingsPrevOrderCodes.slice()
@@ -3973,7 +4205,7 @@ function getLiveStandings(lap) {
   liveStandingsPrevOrderCodes = ordered.map(item => item.code);
   const leaderScore = ordered[0].score;
 
-  return ordered.map((item, i) => {
+  const liveRows = ordered.map((item, i) => {
     const d = item.driver;
     const gapAhead = i === 0
       ? 'LEADER'
@@ -3983,6 +4215,8 @@ function getLiveStandings(lap) {
       : formatLiveLeaderboardGap(leaderScore - item.score);
     return { ...d, pos: i + 1, gap: gapAhead, gapAhead, gapLeader };
   });
+
+  return mergeStandingsWithRetirements(liveRows, withTyre, lap);
 }
 
 function updatePlayback(lap) {
@@ -4027,7 +4261,7 @@ function updatePlayback(lap) {
   // Update timing tower and ORDER tab with live standings
   const standings = getLiveStandings(Math.max(1, displayLap));
   const displayStandings = applyLeaderboardGapModeToStandings(standings, gapMode);
-  updateTrackBattleEffects(standings);
+  updateTrackBattleEffects((standings || []).filter(driver => !driver?.retired));
   safeRenderTimingTower(standings, { displayLap, gapMode });
   renderLiveLeaderboard(displayStandings, displayLap);
   updateBroadcastInfoPanel(lapValue, displayLap);
