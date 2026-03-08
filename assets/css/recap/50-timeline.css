@@ -1,5 +1,7 @@
 /* Progress / Timeline */
 .timeline-bar {
+  margin-top: -20px;
+  margin-bottom: -30px;
   background: linear-gradient(180deg, rgba(18, 18, 28, 0.96), rgba(10, 10, 16, 0.98));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);

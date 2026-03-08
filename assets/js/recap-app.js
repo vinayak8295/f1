@@ -36,6 +36,7 @@ const LEADERBOARD_LEADER_MODE_MS = 10000;
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
+  'Red Bull Racing': '#1e3a5f',
   'Ferrari': '#dc143c',
   'Mercedes': '#00d2be',
   'McLaren': '#ff8700',
@@ -43,10 +44,17 @@ const TEAM_COLORS = {
   'Alpine': '#0090ff',
   'Williams': '#005aff',
   'AlphaTauri': '#2b4562',
+  'Racing Bulls': '#2b4562',
   'Alfa Romeo': '#900000',
   'Haas': '#ffffff',
+  'Haas F1 Team': '#ffffff',
   'RB': '#2b4562',
   'Sauber': '#52e252',
+  'Kick Sauber': '#52e252',
+  'Audi': '#c7d0db',
+  'Audi F1 Team': '#c7d0db',
+  'Cadillac': '#2ea7ff',
+  'Cadillac F1 Team': '#2ea7ff',
 };
 
 // ─── SAMPLE DATA ─────────────────────────────────────────────────────────────
@@ -496,6 +504,8 @@ function initRecap() {
   activeLapChip = 0;
   activeLapChipEl = null;
   resetLeaderboardState();
+  currentCircuitUiConfig = resolveCircuitUiConfig();
+  applyCircuitUiConfig(currentCircuitUiConfig);
 
   const race = raceData.race;
 
@@ -1133,14 +1143,16 @@ function safeRenderTimingTower(drivers, opts = {}) {
 function renderTimingTower(drivers, opts = {}) {
   const container = document.getElementById('tvTimingRows');
   if (!container || !raceData) return;
+  const tower = document.getElementById('tvTimingTower');
   drivers = drivers || raceData.drivers || [];
   const spriteMap = (typeof TEAM_SPRITE_PATHS !== 'undefined' && TEAM_SPRITE_PATHS) ? TEAM_SPRITE_PATHS : {};
   const gapMode = opts.gapMode || getLeaderboardGapMode();
   const uptoLap = Number.isFinite(Number(opts.displayLap)) ? Number(opts.displayLap) : lapValueToCurrentLap(currentLap);
   const pitCounts = getPitStopCountsByDriver(uptoLap);
   const nextBaseline = { ...timingBaselinePosByCode };
+  if (tower) tower.classList.toggle('tt-extended-grid', drivers.length > 20);
 
-  container.innerHTML = drivers.slice(0, 20).map((d, i) => {
+  container.innerHTML = drivers.map((d, i) => {
     const gapSource = i === 0
       ? 'LEADER'
       : (gapMode === 'leader' ? (d.gapLeader || d.gap || '—') : (d.gapAhead || d.gap || '—'));
@@ -1231,6 +1243,261 @@ const CAR_GAP_MULT = 4.8;          // Front/back spacing multiplier (recommended
 const CAR_LENGTH_SCALE = 0.88;     // <1 makes cars visually shorter length-wise.
 const CAR_BRIGHTNESS = 1.18;       // Global brightness boost for car visibility.
 
+// Per-circuit UI tuning.
+// Default behavior is safe-zone auto-fit around the live HUD. Only add circuit
+// overrides for layouts that still need nudging after auto-fit.
+const DEFAULT_CIRCUIT_UI_CONFIG = {
+  trackFit: {
+    autoSafeZones: true,
+    paddingCss: TRACK_EDGE_PADDING_CSS,
+    safeZonesCss: {},
+    scaleMult: 1,
+    offsetXPct: 0,
+    offsetYPct: 0,
+    offsetXPx: 0,
+    offsetYPx: 0,
+  },
+  labels: {
+    scale: 1,
+    leaderScale: 1,
+    liftMult: 1,
+    packedLiftMult: 1,
+  },
+  overlays: {}
+};
+
+const CIRCUIT_UI_CONFIGS = {
+  default: {},
+  melbourne: {
+    trackFit: {
+      autoSafeZones: false,
+      safeZonesCss: { top: 70, right: 286, bottom: 92, left: 258 },
+      scaleMult: 1.12,
+      offsetXPct: 0.055,
+      offsetYPct: 0.035,
+    },
+    labels: {
+      scale: 1.04,
+      leaderScale: 1.08,
+      liftMult: 1.02,
+      packedLiftMult: 1.08,
+    },
+    overlays: {
+      timingTower: { top: 330, left: 12, width: 228 },
+      infoStack: { top: 12, right: 12, width: 266 },
+      pitBox: { right: 14, bottom: 18, width: 236, maxHeight: '30vh' },
+      racePill: { top: 14, left: 14 },
+    }
+  },
+  'australian-grand-prix': {
+    trackFit: {
+      autoSafeZones: false,
+      safeZonesCss: { top: 92, right: 286, bottom: 92, left: 258 },
+      scaleMult: 1.22,
+      offsetXPct: 0.055,
+      offsetYPct: 0.035,
+    },
+    labels: {
+      scale: 1.04,
+      leaderScale: 1.08,
+      liftMult: 1.02,
+      packedLiftMult: 1.08,
+    },
+    overlays: {
+      timingTower: { top: 330, left: 12, width: 228 },
+      infoStack: { top: 12, right: 12, width: 266 },
+      pitBox: { right: 14, bottom: 18, width: 236, maxHeight: '30vh' },
+      racePill: { top: 14, left: 14 },
+    }
+  },
+  'albert-park': {
+    trackFit: {
+      autoSafeZones: false,
+      safeZonesCss: { top: 92, right: 286, bottom: 92, left: 258 },
+      scaleMult: 1.22,
+      offsetXPct: 0.055,
+      offsetYPct: 0.035,
+    },
+    labels: {
+      scale: 1.04,
+      leaderScale: 1.08,
+      liftMult: 1.02,
+      packedLiftMult: 1.08,
+    },
+    overlays: {
+      timingTower: { top: 330, left: 12, width: 228 },
+      infoStack: { top: 12, right: 12, width: 266 },
+      pitBox: { right: 14, bottom: 18, width: 236, maxHeight: '30vh' },
+      racePill: { top: 14, left: 14 },
+    }
+  }
+};
+
+function slugifyCircuitKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeCircuitUiConfig(base, override) {
+  const out = { ...(base || {}) };
+  Object.entries(override || {}).forEach(([key, value]) => {
+    if (isPlainObject(value) && isPlainObject(out[key])) {
+      out[key] = mergeCircuitUiConfig(out[key], value);
+      return;
+    }
+    out[key] = Array.isArray(value) ? value.slice() : value;
+  });
+  return out;
+}
+
+function getCircuitUiCandidateKeys() {
+  const keys = [];
+  const pushKey = value => {
+    const key = slugifyCircuitKey(value);
+    if (key && !keys.includes(key)) keys.push(key);
+  };
+
+  pushKey(raceData?.circuit?.render_config?.matched_key);
+  pushKey(raceData?.race?.circuit);
+  pushKey(raceData?.race?.name);
+  pushKey(raceData?.race?.officialName);
+  pushKey(raceData?.circuit?.name);
+
+  return keys;
+}
+
+function resolveCircuitUiConfig() {
+  let matchedKey = 'default';
+  let config = mergeCircuitUiConfig({}, DEFAULT_CIRCUIT_UI_CONFIG);
+
+  for (const key of getCircuitUiCandidateKeys()) {
+    if (!CIRCUIT_UI_CONFIGS[key]) continue;
+    config = mergeCircuitUiConfig(config, CIRCUIT_UI_CONFIGS[key]);
+    matchedKey = key;
+    break;
+  }
+
+  if (isPlainObject(raceData?.circuit?.ui_config)) {
+    config = mergeCircuitUiConfig(config, raceData.circuit.ui_config);
+  }
+
+  config.__matchedKey = matchedKey;
+  return config;
+}
+
+function toCssLength(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) return `${value}px`;
+  return String(value);
+}
+
+function applyAbsoluteUiBox(element, config) {
+  if (!element) return;
+
+  const props = [
+    'top', 'right', 'bottom', 'left',
+    'width', 'maxWidth', 'minWidth',
+    'height', 'maxHeight', 'minHeight',
+    'transform'
+  ];
+
+  props.forEach(prop => { element.style[prop] = ''; });
+  if (!config) return;
+
+  props.forEach(prop => {
+    if (config[prop] != null) {
+      element.style[prop] = toCssLength(config[prop]);
+    }
+  });
+}
+
+function applyCircuitUiConfig(config) {
+  const overlayConfig = config?.overlays || {};
+  applyAbsoluteUiBox(document.querySelector('.tv-race-pill'), overlayConfig.racePill);
+  applyAbsoluteUiBox(document.getElementById('tvInfoStack'), overlayConfig.infoStack);
+  applyAbsoluteUiBox(document.getElementById('tvTimingTower'), overlayConfig.timingTower);
+  applyAbsoluteUiBox(document.getElementById('tvPitBox'), overlayConfig.pitBox);
+  applyAbsoluteUiBox(document.getElementById('tvRaceControlBar'), overlayConfig.raceControlBar);
+  applyAbsoluteUiBox(document.getElementById('tvFastestFlash'), overlayConfig.fastestFlash);
+}
+
+function measureHudSafeZones(container) {
+  const zones = { top: 0, right: 0, bottom: 0, left: 0 };
+  if (!container) return zones;
+
+  const containerRect = container.getBoundingClientRect();
+  const selectors = [
+    '.tv-race-pill',
+    '#tvInfoStack',
+    '#tvTimingTower',
+    '#tvPitBox'
+  ];
+
+  selectors.forEach(selector => {
+    const element = document.querySelector(selector);
+    if (!element) return;
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const left = Math.max(0, rect.left - containerRect.left);
+    const top = Math.max(0, rect.top - containerRect.top);
+    const right = Math.max(0, containerRect.right - rect.right);
+    const bottom = Math.max(0, containerRect.bottom - rect.bottom);
+    const margin = 12;
+
+    if (left < containerRect.width * 0.4) {
+      zones.left = Math.max(zones.left, left + rect.width + margin);
+    }
+    if (right < containerRect.width * 0.4) {
+      zones.right = Math.max(zones.right, right + rect.width + margin);
+    }
+    if (top < containerRect.height * 0.34) {
+      zones.top = Math.max(zones.top, top + rect.height + margin);
+    }
+    if (bottom < containerRect.height * 0.34) {
+      zones.bottom = Math.max(zones.bottom, bottom + rect.height + margin);
+    }
+  });
+
+  return zones;
+}
+
+function getResolvedTrackFitConfig(container, dpr) {
+  const trackFit = currentCircuitUiConfig?.trackFit || DEFAULT_CIRCUIT_UI_CONFIG.trackFit;
+  const measuredZones = trackFit.autoSafeZones ? measureHudSafeZones(container) : { top: 0, right: 0, bottom: 0, left: 0 };
+  const explicitZones = trackFit.safeZonesCss || {};
+  const paddingCss = Math.max(8, Number(trackFit.paddingCss ?? TRACK_EDGE_PADDING_CSS) || TRACK_EDGE_PADDING_CSS);
+
+  const safeZonesCss = {
+    top: Math.max(paddingCss, measuredZones.top || 0, explicitZones.top || 0),
+    right: Math.max(paddingCss, measuredZones.right || 0, explicitZones.right || 0),
+    bottom: Math.max(paddingCss, measuredZones.bottom || 0, explicitZones.bottom || 0),
+    left: Math.max(paddingCss, measuredZones.left || 0, explicitZones.left || 0),
+  };
+
+  const mult = Math.max(1, Number(dpr) || 1);
+  return {
+    safeZonesPx: {
+      top: safeZonesCss.top * mult,
+      right: safeZonesCss.right * mult,
+      bottom: safeZonesCss.bottom * mult,
+      left: safeZonesCss.left * mult,
+    },
+    scaleMult: Math.max(0.5, Number(trackFit.scaleMult) || 1),
+    offsetXPx: (Number(trackFit.offsetXPx) || 0) * mult,
+    offsetYPx: (Number(trackFit.offsetYPx) || 0) * mult,
+    offsetXPct: Number(trackFit.offsetXPct) || 0,
+    offsetYPct: Number(trackFit.offsetYPct) || 0,
+  };
+}
+
 // ── Build path from raw normalized [x,y] points (Catmull-Rom spline) ──
 function buildTrackPath(W, H, waypoints) {
   const pts = waypoints.map(([x,y]) => [x * W, y * H]);
@@ -1251,7 +1518,7 @@ function buildTrackPath(W, H, waypoints) {
 }
 
 // ── Fit a source path to viewport while preserving aspect ratio ─────────────
-function fitPathToViewport(sourcePath, W, H, paddingPx) {
+function fitPathToViewport(sourcePath, W, H, paddingPx, fitConfig = null) {
   if (!sourcePath.length) {
     return {
       path: [],
@@ -1269,15 +1536,27 @@ function fitPathToViewport(sourcePath, W, H, paddingPx) {
 
   const srcW = Math.max(maxX - minX, 1e-6);
   const srcH = Math.max(maxY - minY, 1e-6);
-  const pad  = Math.max(8, paddingPx || 0);
-  const availW = Math.max(W - pad * 2, W * 0.1);
-  const availH = Math.max(H - pad * 2, H * 0.1);
-  const scale = Math.min(availW / srcW, availH / srcH);
+  const pad = Math.max(8, paddingPx || 0);
+  const safe = fitConfig?.safeZonesPx || {};
+  const padTop = Math.max(pad, Number(safe.top) || 0);
+  const padRight = Math.max(pad, Number(safe.right) || 0);
+  const padBottom = Math.max(pad, Number(safe.bottom) || 0);
+  const padLeft = Math.max(pad, Number(safe.left) || 0);
+  const availW = Math.max(W - padLeft - padRight, W * 0.1);
+  const availH = Math.max(H - padTop - padBottom, H * 0.1);
+  const baseScale = Math.min(availW / srcW, availH / srcH);
+  const scale = baseScale * Math.max(0.5, Number(fitConfig?.scaleMult) || 1);
 
   const fittedW = srcW * scale;
   const fittedH = srcH * scale;
-  const offsetX = (W - fittedW) * 0.5 - minX * scale;
-  const offsetY = (H - fittedH) * 0.5 - minY * scale;
+  const freeW = W - padLeft - padRight - fittedW;
+  const freeH = H - padTop - padBottom - fittedH;
+  const offsetX = padLeft + freeW * 0.5 - minX * scale
+    + (Number(fitConfig?.offsetXPx) || 0)
+    + (Number(fitConfig?.offsetXPct) || 0) * W;
+  const offsetY = padTop + freeH * 0.5 - minY * scale
+    + (Number(fitConfig?.offsetYPx) || 0)
+    + (Number(fitConfig?.offsetYPct) || 0) * H;
 
   return {
     path: sourcePath.map(([x, y]) => [x * scale + offsetX, y * scale + offsetY]),
@@ -1713,6 +1992,7 @@ let preRendered = null;
 let trackViewportTransform = { scale: 1, offsetX: 0, offsetY: 0 };
 let pitLaneGeometry = null;
 let pitStopSchedule = [];
+let currentCircuitUiConfig = mergeCircuitUiConfig({}, DEFAULT_CIRCUIT_UI_CONFIG);
 
 // ── Color helpers ──
 function hexToRgb(hex) {
@@ -1763,6 +2043,10 @@ const DEFAULT_TEAM_SPRITES = {
   'Sauber': 'assets/sprites/cars/teams/kick-sauber.png',
   'Haas F1 Team': 'assets/sprites/cars/teams/haas-f1-team.png',
   'Haas': 'assets/sprites/cars/teams/haas-f1-team.png',
+  'Audi': 'assets/sprites/cars/teams/audi.png',
+  'Audi F1 Team': 'assets/sprites/cars/teams/audi.png',
+  'Cadillac': 'assets/sprites/cars/teams/cadillac.png',
+  'Cadillac F1 Team': 'assets/sprites/cars/teams/cadillac.png',
 };
 
 function buildAutoCarSpriteConfig() {
@@ -1848,6 +2132,8 @@ function getCarSpriteCandidates(car) {
   if (slug === 'haas') slugCandidates.push('assets/sprites/cars/teams/haas-f1-team');
   if (slug === 'kick-sauber' || slug === 'sauber') slugCandidates.push('assets/sprites/cars/teams/kick-sauber');
   if (slug === 'racing-bulls' || slug === 'alphatauri') slugCandidates.push('assets/sprites/cars/teams/rb');
+  if (slug === 'audi-f1-team') slugCandidates.push('assets/sprites/cars/teams/audi');
+  if (slug === 'cadillac-f1-team') slugCandidates.push('assets/sprites/cars/teams/cadillac');
 
   const candidates = [
     ...expandSpritePathCandidates(carSpriteConfig.byCode?.[car.code]),
@@ -2531,7 +2817,8 @@ function spawnCars() {
     setStatus('⚠ No real circuit data — using synthetic Red Bull Ring layout');
   }
 
-  const fitted = fitPathToViewport(rawTrackPath, canvasW, canvasH, TRACK_EDGE_PADDING_CSS * dpr);
+  const fitCfg = getResolvedTrackFitConfig(container, dpr);
+  const fitted = fitPathToViewport(rawTrackPath, canvasW, canvasH, TRACK_EDGE_PADDING_CSS * dpr, fitCfg);
   trackPath = fitted.path;
   trackViewportTransform = fitted.transform;
   resetLiveTrackProgressState();
@@ -2553,9 +2840,11 @@ function spawnCars() {
     'RB':             '#6692FF','Racing Bulls':'#6692FF',
     'Sauber':         '#52E252','Kick Sauber':'#52E252',
     'Haas':           '#B6BABD','Haas F1 Team':'#B6BABD',
+    'Audi':           '#C7D0DB','Audi F1 Team':'#C7D0DB',
+    'Cadillac':       '#2EA7FF','Cadillac F1 Team':'#2EA7FF',
   };
 
-  const drivers  = (raceData?.drivers || []).slice(0, 20);
+  const drivers  = (raceData?.drivers || []);
   const totalPts = trackPath.length;
 
   if (hasRealFrames) {
@@ -2623,7 +2912,12 @@ function spawnCars() {
 
 function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   const col = car.color;
-  const s = (isLeader ? 1.55 : 1.4) * CAR_VISUAL_SCALE;
+  const labelCfg = currentCircuitUiConfig?.labels || DEFAULT_CIRCUIT_UI_CONFIG.labels;
+  const leaderScale = Math.max(0.7, Number(labelCfg.leaderScale) || 1);
+  const labelScale = Math.max(0.7, Number(labelCfg.scale) || 1);
+  const liftMult = Math.max(0.7, Number(labelCfg.liftMult) || 1);
+  const packedLiftMult = Math.max(0.7, Number(labelCfg.packedLiftMult) || 1);
+  const s = (isLeader ? 1.55 * leaderScale : 1.4 * labelScale) * CAR_VISUAL_SCALE;
   ctx.save();
   const FS = 8.5 * s;
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
@@ -2634,7 +2928,8 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   const bH = 13;
   const bX = cx - bW / 2;
   const closePacked = (car._localDensity || 0) > 2;
-  const yLift = closePacked ? (isLeader ? 22 * s : 20 * s) : (isLeader ? 30 * s : 27 * s);
+  const baseLift = closePacked ? (isLeader ? 22 * s : 20 * s) : (isLeader ? 30 * s : 27 * s);
+  const yLift = baseLift * (closePacked ? packedLiftMult : liftMult);
   const bY = cy - yLift - bH / 2;
   ctx.shadowColor = 'rgba(0,0,0,0.8)';
   ctx.shadowBlur = 7;
@@ -3859,6 +4154,8 @@ window.onload = () => {
 window.addEventListener('resize', () => {
   if (raceData && document.getElementById('raceRecap').classList.contains('active')) {
     if (trackAnimFrame) { cancelAnimationFrame(trackAnimFrame); trackAnimFrame = null; }
+    currentCircuitUiConfig = resolveCircuitUiConfig();
+    applyCircuitUiConfig(currentCircuitUiConfig);
     spawnCars();
   }
 });
