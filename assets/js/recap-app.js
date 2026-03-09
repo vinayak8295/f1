@@ -11,6 +11,8 @@ let activeLapChip = 0;
 let activeLapChipEl = null;
 let latestIncidentEvent = null;
 let timingBaselinePosByCode = {};
+let timingBaselineLocked = false;
+let timingBaselineCapturedAtReplayTime = null;
 let leaderboardPrevPosByCode = {};
 let leaderboardLastOrderSignature = '';
 let leaderboardPrevOrderCodes = [];
@@ -34,6 +36,7 @@ let driverRetirementInfoByCode = new Map();
 
 const LEADERBOARD_INTERVAL_MODE_MS = 30000;
 const LEADERBOARD_LEADER_MODE_MS = 10000;
+const TIMING_BASELINE_CAPTURE_SEC = 6;
 
 const TEAM_COLORS = {
   'Red Bull': '#1e3a5f',
@@ -326,6 +329,47 @@ function deriveDriverRetirementInfo() {
   });
 
   return infoByCode;
+}
+
+function buildRuntimePerfProfile(data) {
+  const frameCount = Array.isArray(data?.frames) ? data.frames.length : 0;
+  const driverCount = Array.isArray(data?.drivers) ? data.drivers.length : 0;
+  const isLargeRealReplay = frameCount > 2500 && driverCount >= 18;
+  const isVeryLargeRealReplay = frameCount > 4500 && driverCount >= 20;
+
+  if (isVeryLargeRealReplay) {
+    return {
+      enabled: true,
+      dprCap: 1,
+      uiUpdateMs: 125,
+      minRenderFrameMs: 33,
+      trails: false,
+      battleFx: false,
+      laneIterations: 2,
+    };
+  }
+
+  if (isLargeRealReplay) {
+    return {
+      enabled: true,
+      dprCap: 1.25,
+      uiUpdateMs: 90,
+      minRenderFrameMs: 24,
+      trails: false,
+      battleFx: true,
+      laneIterations: 3,
+    };
+  }
+
+  return {
+    enabled: false,
+    dprCap: 2,
+    uiUpdateMs: 50,
+    minRenderFrameMs: 0,
+    trails: true,
+    battleFx: true,
+    laneIterations: 4,
+  };
 }
 
 function getDriverRetirementInfo(code) {
@@ -666,6 +710,16 @@ function generateRecap() {
     return;
   }
   raceData = parsed;
+  runtimePerfProfile = buildRuntimePerfProfile(raceData);
+
+  if (runtimePerfProfile.enabled && raw.length > 200000) {
+    document.getElementById('jsonInput').value = `{
+  "note": "Large race JSON loaded into runtime cache",
+  "race": "${raceData?.race?.name || ''} ${raceData?.race?.year || ''}",
+  "drivers": ${Array.isArray(raceData?.drivers) ? raceData.drivers.length : 0},
+  "frames": ${Array.isArray(raceData?.frames) ? raceData.frames.length : 0}
+}`;
+  }
 
   // Detect what type of data we have
   const hasFrames  = raceData?.frames?.length > 5;
@@ -710,6 +764,7 @@ function initRecap() {
   activeLapChipEl = null;
   resetLeaderboardState();
   driverRetirementInfoByCode = deriveDriverRetirementInfo();
+  runtimePerfProfile = buildRuntimePerfProfile(raceData);
   currentCircuitUiConfig = resolveCircuitUiConfig();
   applyCircuitUiConfig(currentCircuitUiConfig);
 
@@ -805,6 +860,8 @@ function resetLeaderboardState() {
   leaderboardLastAnimatedSwapKey = '';
   leaderboardLastAnimatedSwapAt = 0;
   timingBaselinePosByCode = {};
+  timingBaselineLocked = false;
+  timingBaselineCapturedAtReplayTime = null;
   leaderboardGapModeElapsedMs = 0;
   leaderboardGapModeLastTickMs = null;
 
@@ -902,6 +959,55 @@ function getPitStopCountsByDriver(uptoLap = Infinity) {
   });
 
   return counts;
+}
+
+function isStandingRetiredLike(driver) {
+  const gapRaw = String(driver?.gap ?? driver?.gapAhead ?? driver?.gapLeader ?? '').trim();
+  return !!driver?.retired || /^(DNF|DNS|DSQ|RET|OUT)$/i.test(gapRaw) || /RETIRED/i.test(gapRaw);
+}
+
+function getExplicitBaselinePos(driver) {
+  const candidates = [
+    driver?.gridPos,
+    driver?.startPos,
+    driver?.grid,
+    driver?.startingPos,
+  ];
+  for (const value of candidates) {
+    const pos = Number(value);
+    if (Number.isFinite(pos) && pos > 0) return pos;
+  }
+  return null;
+}
+
+function captureTimingBaseline(drivers) {
+  const baseline = {};
+  (Array.isArray(drivers) ? drivers : []).forEach((d) => {
+    const code = normalizeDriverCode(d?.code);
+    const explicitPos = getExplicitBaselinePos(d);
+    const pos = Number.isFinite(explicitPos) ? explicitPos : Number(d?.pos);
+    if (!code || !Number.isFinite(pos) || pos <= 0 || isStandingRetiredLike(d)) return;
+    baseline[code] = pos;
+  });
+  if (!Object.keys(baseline).length) return false;
+  timingBaselinePosByCode = baseline;
+  timingBaselineLocked = true;
+  timingBaselineCapturedAtReplayTime = usingRealData ? replayTime : 0;
+  return true;
+}
+
+function shouldCaptureTimingBaseline(drivers) {
+  if (timingBaselineLocked || !isPlaying) return false;
+  const list = Array.isArray(drivers) ? drivers : [];
+  const missingExplicit = list.filter(d => !isStandingRetiredLike(d) && !Number.isFinite(getExplicitBaselinePos(d))).length;
+  if (!missingExplicit) return false;
+  const activeCount = list.filter(d => !isStandingRetiredLike(d) && Number.isFinite(Number(d?.pos))).length;
+  if (!activeCount) return false;
+  if (!usingRealData) return true;
+  if ((Number(replayTime) || 0) < TIMING_BASELINE_CAPTURE_SEC) return false;
+  const totalRef = Math.max(activeCount, Array.isArray(raceData?.drivers) ? raceData.drivers.length : 0);
+  const minCount = Math.max(8, Math.floor(totalRef * 0.6));
+  return activeCount >= minCount;
 }
 
 function createLeaderboardRow(driverCode) {
@@ -1358,6 +1464,9 @@ function renderTimingTower(drivers, opts = {}) {
   const gapMode = opts.gapMode || getLeaderboardGapMode();
   const uptoLap = Number.isFinite(Number(opts.displayLap)) ? Number(opts.displayLap) : lapValueToCurrentLap(currentLap);
   const pitCounts = getPitStopCountsByDriver(uptoLap);
+  if (shouldCaptureTimingBaseline(drivers)) {
+    captureTimingBaseline(drivers);
+  }
   const nextBaseline = { ...timingBaselinePosByCode };
   if (tower) tower.classList.toggle('tt-extended-grid', drivers.length > 20);
 
@@ -1373,13 +1482,17 @@ function renderTimingTower(drivers, opts = {}) {
     const code = normalizeDriverCode(d.code) || '---';
     const tyre = /^[SMHIW]$/i.test(String(d.tyre || '').trim()) ? String(d.tyre).trim().toUpperCase() : '';
     const currPos = Number(d.pos);
-    if (code !== '---' && !(code in nextBaseline) && Number.isFinite(currPos) && currPos > 0 && isPlaying) {
+    const explicitBasePos = getExplicitBaselinePos(d);
+    if (Number.isFinite(explicitBasePos) && explicitBasePos > 0 && code !== '---') {
+      nextBaseline[code] = explicitBasePos;
+    } else if (timingBaselineLocked && code !== '---' && !(code in nextBaseline) && Number.isFinite(currPos) && currPos > 0 && !isOut) {
       nextBaseline[code] = currPos;
     }
     const basePos = Number(nextBaseline[code]);
-    const delta = (Number.isFinite(currPos) && Number.isFinite(basePos) && basePos > 0) ? (basePos - currPos) : 0;
-    const moveText = delta > 0 ? `▲${delta}` : (delta < 0 ? `▼${Math.abs(delta)}` : '');
-    const moveClass = delta > 0 ? 'up' : (delta < 0 ? 'down' : '');
+    const hasBaseline = Number.isFinite(currPos) && Number.isFinite(basePos) && basePos > 0;
+    const delta = hasBaseline ? (basePos - currPos) : 0;
+    const moveText = hasBaseline ? (delta > 0 ? `▲${delta}` : (delta < 0 ? `▼${Math.abs(delta)}` : '')) : '';
+    const moveClass = hasBaseline ? (delta > 0 ? 'up' : (delta < 0 ? 'down' : '')) : '';
     const pitStops = pitCounts[code] || 0;
     const pitText = `P${pitStops}`;
     const pitClass = pitStops > 0 ? 'has-pits' : 'no-pits';
@@ -1389,7 +1502,7 @@ function renderTimingTower(drivers, opts = {}) {
     const sideText = gapMode === 'leader' ? pitText : moveText;
     const sideTitle = gapMode === 'leader'
       ? `Pit stops: ${pitStops}`
-      : 'Positions gained/lost';
+      : (Number.isFinite(explicitBasePos) ? 'Positions gained/lost from starting grid' : (timingBaselineLocked ? 'Positions gained/lost from race baseline' : 'Movement baseline pending'));
     const teamPath = spriteMap[d.team]
       || (typeof teamSlug === 'function' ? `assets/sprites/cars/teams/${teamSlug(d.team)}.png` : '')
       || '';
@@ -1424,6 +1537,16 @@ let replayFrames   = [];   // [{t, cars:{CODE:{x,y}}}] from FastF1 extractor
 let replayTime     = 0;    // current race time in seconds (0 → maxT)
 let replaySpeed    = 1.0;  // auto-calculated: maxT / TARGET_DURATION
 let usingRealData  = false;
+let replayFrameDerivedByCode = new Map();
+let runtimePerfProfile = {
+  enabled: false,
+  dprCap: 2,
+  uiUpdateMs: 50,
+  minRenderFrameMs: 0,
+  trails: true,
+  battleFx: true,
+  laneIterations: 4,
+};
 
 const TARGET_DURATION = 540; // play full race in 9 minutes wall-clock time (was 3 min — 3x slower)
 const BASE_PLAYBACK_MULT = 0.5; // Global half-speed playback (0.5x).
@@ -1480,8 +1603,8 @@ const CIRCUIT_UI_CONFIGS = {
   melbourne: {
     trackFit: {
       autoSafeZones: false,
-      safeZonesCss: { top: 10, right: 300, bottom: 10, left: 220 },
-      scaleMult: 1.14,
+      safeZonesCss: { top: 10, right: 320, bottom: 10, left: 100 },
+      scaleMult: 1.15,
       offsetXPct: 0.055,
       offsetYPct: 0.035,
     },
@@ -1794,6 +1917,68 @@ function realPosToCanvas(x, y, W, H) {
   ];
 }
 
+function buildReplayFrameDerivedCache(drivers, canvasW, canvasH) {
+  replayFrameDerivedByCode = new Map();
+  if (!Array.isArray(replayFrames) || !replayFrames.length || !trackPath.length) return;
+
+  const frameCount = replayFrames.length;
+  const driverCodes = (Array.isArray(drivers) ? drivers : [])
+    .map(driver => normalizeDriverCode(driver?.code))
+    .filter(Boolean);
+
+  driverCodes.forEach(code => {
+    const x = new Float32Array(frameCount);
+    const y = new Float32Array(frameCount);
+    const idx = new Int32Array(frameCount);
+    x.fill(Number.NaN);
+    y.fill(Number.NaN);
+    idx.fill(-1);
+    replayFrameDerivedByCode.set(code, { x, y, idx });
+  });
+
+  const lastIdxByCode = new Map();
+  for (let fi = 0; fi < frameCount; fi++) {
+    const cars = replayFrames[fi]?.cars || {};
+    Object.entries(cars).forEach(([rawCode, car]) => {
+      const code = normalizeDriverCode(rawCode);
+      const bucket = replayFrameDerivedByCode.get(code);
+      if (!bucket) return;
+
+      const [px, py] = realPosToCanvas(car.x, car.y, canvasW, canvasH);
+      bucket.x[fi] = px;
+      bucket.y[fi] = py;
+
+      const hintIdx = lastIdxByCode.has(code) ? lastIdxByCode.get(code) : null;
+      const pathIdx = findNearestTrackIndexForStandings(px, py, hintIdx, 26, !Number.isFinite(hintIdx));
+      bucket.idx[fi] = Number.isFinite(pathIdx) ? pathIdx : -1;
+      if (Number.isFinite(pathIdx) && pathIdx >= 0) {
+        lastIdxByCode.set(code, pathIdx);
+      }
+    });
+  }
+
+  if (runtimePerfProfile?.enabled) {
+    for (let fi = 0; fi < frameCount; fi++) {
+      const t = replayFrames[fi]?.t;
+      replayFrames[fi] = { t };
+    }
+    if (raceData && Array.isArray(raceData.frames)) {
+      raceData.frames = replayFrames;
+    }
+  }
+}
+
+function getReplayDerivedSample(code, frameIdx) {
+  const bucket = replayFrameDerivedByCode.get(normalizeDriverCode(code));
+  if (!bucket) return null;
+  const fi = Math.max(0, Math.min(bucket.x.length - 1, Math.floor(frameIdx || 0)));
+  const x = bucket.x[fi];
+  const y = bucket.y[fi];
+  const pathIdx = bucket.idx[fi];
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y, pathIdx };
+}
+
 function buildNormals(path) {
   const N = path.length;
   return path.map((pt, i) => {
@@ -1826,9 +2011,17 @@ function smoothAngle(current, target, t) {
   return current + delta * Math.max(0, Math.min(1, t));
 }
 
-function parseDurationSeconds(value) {
+function parseDurationSeconds(value, fallback = null) {
   const n = parseFloat(String(value ?? '').replace(/[^\d.]/g, ''));
-  return Number.isFinite(n) ? n : 2.5;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatSessionClockLabel(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '';
+  const whole = Math.round(seconds);
+  const mins = Math.floor(whole / 60);
+  const secs = whole % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
 function inferCompoundFromText(value) {
@@ -1843,25 +2036,55 @@ function inferCompoundFromText(value) {
 
 function buildPitStopSchedule() {
   const stops = [];
-  const pitHistory = Array.isArray(raceData?.pitHistory) ? raceData.pitHistory : [];
-
-  pitHistory.forEach((stop, idx) => {
+  const normalizedStops = Array.isArray(raceData?.pitStops) ? raceData.pitStops : [];
+  normalizedStops.forEach((stop, idx) => {
     const code = normalizeDriverCode(stop.driver);
     const lap = Number(stop.lap);
     if (!code || !Number.isFinite(lap) || lap <= 0) return;
 
     const compound = inferCompoundFromText(stop.compound || stop.tyre || stop.message);
-    const durationSec = parseDurationSeconds(stop.duration || stop.timeLoss || stop.stopTime);
-    const holdFrac = Math.max(0.10, Math.min(0.2, durationSec / 18));
+    const entryTime = Number(stop.entryTime);
+    const exitTime = Number(stop.exitTime);
+    const derivedDuration = Number.isFinite(entryTime) && Number.isFinite(exitTime)
+      ? Math.max(0, exitTime - entryTime)
+      : null;
+    const durationSec = Number.isFinite(derivedDuration)
+      ? derivedDuration
+      : parseDurationSeconds(stop.duration || stop.timeLoss || stop.stopTime, null);
+    const holdFrac = Number.isFinite(durationSec)
+      ? Math.max(0.10, Math.min(0.2, durationSec / 18))
+      : 0.14;
 
     stops.push({
-      id: `${code}-${lap}-${idx}`,
+      id: `${code}-${lap}-${idx}-pitstops`,
+      code,
+      lap,
+      compound: compound || '—',
+      durationSec,
+      timeLabel: String(stop.time || '').trim() || formatSessionClockLabel(entryTime || exitTime),
+      holdFrac,
+    });
+  });
+
+  const pitHistory = Array.isArray(raceData?.pitHistory) ? raceData.pitHistory : [];
+  pitHistory.forEach((stop, idx) => {
+    const code = normalizeDriverCode(stop.driver);
+    const lap = Number(stop.lap);
+    if (!code || !Number.isFinite(lap) || lap <= 0) return;
+    const id = `${code}-${lap}-${idx}-history`;
+    if (stops.some(existing => existing.id.startsWith(`${code}-${lap}-`))) return;
+    const compound = inferCompoundFromText(stop.compound || stop.tyre || stop.message);
+    const durationSec = parseDurationSeconds(stop.duration || stop.timeLoss || stop.stopTime, null);
+    stops.push({
+      id,
       code,
       lap,
       compound: compound || '—',
       durationSec,
       timeLabel: String(stop.time || '').trim(),
-      holdFrac,
+      holdFrac: Number.isFinite(durationSec)
+        ? Math.max(0.10, Math.min(0.2, durationSec / 18))
+        : 0.14,
     });
   });
 
@@ -1874,12 +2097,12 @@ function buildPitStopSchedule() {
         if (!code || !Number.isFinite(lap) || lap <= 0) return;
         const compound = inferCompoundFromText(event.message);
         stops.push({
-          id: `${code}-${lap}-${idx}`,
+          id: `${code}-${lap}-${idx}-events`,
           code,
           lap,
           compound: compound || '—',
-          durationSec: 2.5,
-          timeLabel: '',
+          durationSec: parseDurationSeconds(event.duration || event.timeLoss || event.stopTime, null),
+          timeLabel: String(event.time || '').trim(),
           holdFrac: 0.14,
         });
       });
@@ -2025,10 +2248,12 @@ function getPitStateForStop(stop, lapValue) {
   }
 
   let liveStopSec = 0;
-  if (progress >= travelEnd && progress < holdEnd) {
+  if (Number.isFinite(stop.durationSec) && progress >= travelEnd && progress < holdEnd) {
     liveStopSec = stop.durationSec * ((progress - travelEnd) / Math.max(0.001, holdEnd - travelEnd));
-  } else if (progress >= holdEnd) {
+  } else if (Number.isFinite(stop.durationSec) && progress >= holdEnd) {
     liveStopSec = stop.durationSec;
+  } else {
+    liveStopSec = null;
   }
 
   const pathBias = ((stop.stackIndex || 0) - (((stop.lapGroupSize || 1) - 1) * 0.5)) * 0.08;
@@ -2067,7 +2292,7 @@ function getVisiblePitStatesForLap(lapValue) {
       phaseLabel: 'PIT COMPLETE',
       progress: 1,
       sample: null,
-      liveStopSec: stop.durationSec
+      liveStopSec: Number.isFinite(stop.durationSec) ? stop.durationSec : null
     });
   });
 
@@ -2110,9 +2335,9 @@ function updatePitBoxOverlay(lapValue) {
     const durationValue = state.phase === 'service'
       ? (Number.isFinite(state.liveStopSec) ? state.liveStopSec : state.durationSec)
       : state.durationSec;
-    const durationLabel = state.phase === 'service'
-      ? `${durationValue.toFixed(1)}S LIVE`
-      : `${durationValue.toFixed(1)}S`;
+    const durationLabel = Number.isFinite(durationValue)
+      ? (state.phase === 'service' ? `${durationValue.toFixed(1)}S LIVE` : `${durationValue.toFixed(1)}S`)
+      : (state.phase === 'service' ? 'LIVE' : 'TIME N/A');
     return `
       <div class="tv-pit-row">
         <div class="tv-pit-driver">${state.code}</div>
@@ -2890,17 +3115,7 @@ function buildOffscreenTrack(W, H) {
     ctx.restore();
 
     // DRS label
-    if (indices.length > 5) {
-      const midIdx = indices[Math.floor(indices.length/2)];
-      const [lx, ly] = pts[midIdx];
-      ctx.save();
-      ctx.fillStyle='rgba(0,0,0,0.65)';
-      if(ctx.roundRect){ctx.beginPath();ctx.roundRect(lx-14,ly-20,28,13,3);ctx.fill();}
-      ctx.font='bold 7px "Orbitron",monospace';
-      ctx.fillStyle='rgba(0,220,255,0.9)'; ctx.textAlign='center';
-      ctx.fillText(`DRS ${zi+1}`, lx, ly-10);
-      ctx.restore();
-    }
+   
   });
 
   // ── 11. Center dashed white line ──────────────────────────────────
@@ -2993,7 +3208,7 @@ function spawnCars() {
 
   const canvas    = document.getElementById('trackCanvas');
   const container = document.getElementById('trackAnimation');
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, runtimePerfProfile?.dprCap || 2);
   const W   = container.clientWidth;
   const H   = container.clientHeight;
   const canvasW = W * dpr;
@@ -3060,16 +3275,17 @@ function spawnCars() {
     // ── REAL MODE: position driven by frame data ─────────────────
     replayFrames = raceData.frames;
     replayTime   = 0; // always start from beginning
+    buildReplayFrameDerivedCache(drivers, canvasW, canvasH);
 
     // Auto-calculate speed: race duration / TARGET_DURATION wall-clock seconds
     const maxT = replayFrames[replayFrames.length - 1]?.t || 1;
     replaySpeed = maxT / TARGET_DURATION; // e.g. 8460s race / 180s = 47x speed
 
     // Initialise car objects from frame 0
-    const f0 = replayFrames[0]?.cars || {};
     trackCars = drivers.map(d => {
-      const fp = f0[d.code] || { x: 0.5, y: 0.5 };
-      const [cx, cy] = realPosToCanvas(fp.x, fp.y, canvasW, canvasH);
+      const sample0 = getReplayDerivedSample(d.code, 0);
+      const cx = sample0?.x ?? (canvasW * 0.5);
+      const cy = sample0?.y ?? (canvasH * 0.5);
       return {
         code:     d.code,
         color:    d.color || TEAM_CLR[d.team] || '#aaaaaa',
@@ -3084,14 +3300,17 @@ function spawnCars() {
         drsOpen:  false,
         lapCount: 0,
         progress: 0, baseSpeed: 0, speed: 0,
+        _trackIdxHint: sample0?.pathIdx ?? -1,
       };
     });
 
     const effectiveReplay = replaySpeed * BASE_PLAYBACK_MULT;
-    setStatus(`✅ Real FastF1 data · ${drivers.length} drivers · ${replayFrames.length} frames · ${Math.round(maxT)}s · playing at ${effectiveReplay.toFixed(1)}x speed`);
+    const perfSuffix = runtimePerfProfile?.enabled ? ' · performance mode' : '';
+    setStatus(`✅ Real FastF1 data · ${drivers.length} drivers · ${replayFrames.length} frames · ${Math.round(maxT)}s · playing at ${effectiveReplay.toFixed(1)}x speed${perfSuffix}`);
 
   } else {
     // ── SYNTHETIC MODE: path-based animation ─────────────────────
+    replayFrameDerivedByCode = new Map();
     const spacing = totalPts * 0.082;
     trackCars = drivers.map((d, i) => {
       const baseSpd = 68 - i * 0.5;
@@ -3124,9 +3343,14 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   const labelCfg = currentCircuitUiConfig?.labels || DEFAULT_CIRCUIT_UI_CONFIG.labels;
   const leaderScale = Math.max(0.7, Number(labelCfg.leaderScale) || 1);
   const labelScale = Math.max(0.7, Number(labelCfg.scale) || 1);
-  const liftMult = Math.max(0.7, Number(labelCfg.liftMult) || 1);
-  const packedLiftMult = Math.max(0.7, Number(labelCfg.packedLiftMult) || 1);
   const s = (isLeader ? 1.55 * leaderScale : 1.4 * labelScale) * CAR_VISUAL_SCALE;
+  const angle = Number.isFinite(car._labelAngle) ? car._labelAngle : (car._pitRender?.angle ?? car.angle ?? 0);
+  const tx = Math.cos(angle);
+  const ty = Math.sin(angle);
+  const nx = -Math.sin(angle);
+  const ny = Math.cos(angle);
+  let side = getStableLaneSlot(car);
+  if (!side) side = isLeader ? 1 : -1;
   ctx.save();
   const FS = 8.5 * s;
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
@@ -3135,11 +3359,13 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   const tw = ctx.measureText(car.code).width;
   const bW = tw + 14;
   const bH = 13;
-  const bX = cx - bW / 2;
-  const closePacked = (car._localDensity || 0) > 2;
-  const baseLift = closePacked ? (isLeader ? 22 * s : 20 * s) : (isLeader ? 30 * s : 27 * s);
-  const yLift = baseLift * (closePacked ? packedLiftMult : liftMult);
-  const bY = cy - yLift - bH / 2;
+  const sideOffset = (isLeader ? 12.0 : 10.0) * s;
+  const rearOffset = (isLeader ? 5.8 : 4.8) * s;
+  const liftOffset = (isLeader ? 2.0 : 1.1) * s;
+  const labelX = cx + nx * side * sideOffset - tx * rearOffset;
+  const labelY = cy + ny * side * sideOffset - ty * rearOffset - liftOffset;
+  const bX = labelX - bW / 2;
+  const bY = labelY - bH / 2;
   ctx.shadowColor = 'rgba(0,0,0,0.8)';
   ctx.shadowBlur = 7;
   ctx.fillStyle = 'rgba(6,6,12,0.92)';
@@ -3151,10 +3377,10 @@ function drawDriverLabel(ctx, cx, cy, car, isLeader) {
   else ctx.fillRect(bX, bY, 4, bH);
   ctx.fillStyle = 'rgba(255,255,255,0.38)';
   ctx.font = '500 7px "IBM Plex Mono",monospace';
-  ctx.fillText(`P${car.pos}`, cx + tw / 2 + 2, bY + bH - 2);
+  ctx.fillText(`P${car.pos}`, labelX + tw / 2 + 2, bY + bH - 2);
   ctx.fillStyle = '#ffffff';
   ctx.font = `700 ${FS}px "IBM Plex Mono",monospace`;
-  ctx.fillText(car.code, cx + 2.5, bY + bH - 3);
+  ctx.fillText(car.code, labelX + 2.5, bY + bH - 3);
   ctx.restore();
 }
 
@@ -3412,22 +3638,45 @@ function applyOvertakeLaneOffsets(cars, dt) {
   const laneMax = 16 * CAR_VISUAL_SCALE; // keep width-wise motion subtle
   const orderLongGap = 40 * CAR_VISUAL_SCALE * gapMult; // requested front/back gap
   const longMax = Math.max(88 * CAR_VISUAL_SCALE, orderLongGap * 1.55); // don't cap away user gap
-  const iterations = 4;
+  const iterations = Math.max(1, Number(runtimePerfProfile?.laneIterations) || 4);
   const eps = 1e-3;
+  const N = trackPath.length;
 
   // Start from telemetry position.
   cars.forEach((car) => {
     car._rx = car.canvasX;
     car._ry = car.canvasY;
     car._localDensity = 0;
+    const idx = findNearestTrackIndex(car.canvasX, car.canvasY, car._trackIdxHint);
+    car._trackIdxHint = idx;
+    const base = trackPath[idx] || [car.canvasX, car.canvasY];
+    const prev = trackPath[(idx - 2 + N) % N] || base;
+    const next = trackPath[(idx + 2) % N] || base;
+    const t0 = Math.atan2(base[1] - prev[1], base[0] - prev[0]);
+    const t1 = Math.atan2(next[1] - base[1], next[0] - base[0]);
+    const bend = Math.abs(normalizeAngle(t1 - t0));
+    const clampCornerFactor = Math.min(1, bend / 0.85);
+    const tdx = next[0] - prev[0];
+    const tdy = next[1] - prev[1];
+    const tLen = Math.hypot(tdx, tdy) || 1;
+    const ux = tdx / tLen;
+    const uy = tdy / tLen;
+    car._laneBaseX = base[0];
+    car._laneBaseY = base[1];
+    car._laneTangentX = ux;
+    car._laneTangentY = uy;
+    car._laneNormalX = -uy;
+    car._laneNormalY = ux;
+    car._laneCornerFactor = clampCornerFactor;
   });
 
   // Deterministic lane staggering helps corner packs before repulsion kicks in.
-  const posOrder = [...cars].sort((a, b) => (a.pos || 999) - (b.pos || 999));
+  const posOrder = [...cars].sort((a, b) => ((a.pos || 999) - (b.pos || 999)) || String(a.code || '').localeCompare(String(b.code || '')));
   posOrder.forEach((car, i) => {
-    const laneSeed = ((i % 3) - 1) * 3.2 * CAR_VISUAL_SCALE;
-    const nx = -Math.sin(car.angle || 0);
-    const ny = Math.cos(car.angle || 0);
+    const cornerTighten = Math.max(0, 1 - (car._laneCornerFactor || 0) * 1.18);
+    const laneSeed = getStableLaneSlot(car) * 3.2 * CAR_VISUAL_SCALE * cornerTighten;
+    const nx = car._laneNormalX ?? -Math.sin(car.angle || 0);
+    const ny = car._laneNormalY ?? Math.cos(car.angle || 0);
     car._rx += nx * laneSeed;
     car._ry += ny * laneSeed;
   });
@@ -3437,12 +3686,17 @@ function applyOvertakeLaneOffsets(cars, dt) {
     for (let i = 1; i < posOrder.length; i++) {
       const ahead = posOrder[i - 1];
       const behind = posOrder[i];
-      const ang = (Number.isFinite(behind.angle) ? behind.angle : (ahead.angle || 0));
-      const tx = Math.cos(ang);
-      const ty = Math.sin(ang);
+      const pairCornerFactor = Math.max(ahead._laneCornerFactor || 0, behind._laneCornerFactor || 0);
+      const pairDist = Math.hypot(ahead._rx - behind._rx, ahead._ry - behind._ry);
+      if (pairCornerFactor > 0.24 || pairDist > (86 * CAR_VISUAL_SCALE)) continue;
+      const pairGapTarget = orderLongGap * (1 - 0.78 * pairCornerFactor);
+      if (pairGapTarget <= eps) continue;
+      const tx = behind._laneTangentX ?? ahead._laneTangentX ?? Math.cos(Number.isFinite(behind.angle) ? behind.angle : (ahead.angle || 0));
+      const ty = behind._laneTangentY ?? ahead._laneTangentY ?? Math.sin(Number.isFinite(behind.angle) ? behind.angle : (ahead.angle || 0));
       const gap = (ahead._rx - behind._rx) * tx + (ahead._ry - behind._ry) * ty;
-      if (gap >= orderLongGap) continue;
-      const deficit = (orderLongGap - gap);
+      if (gap >= pairGapTarget) continue;
+      const pushScale = 1 - pairCornerFactor * 0.76;
+      const deficit = (pairGapTarget - gap) * Math.max(0.14, pushScale);
       // Push the following car back harder than we pull the car ahead forward.
       ahead._rx += tx * deficit * 0.16;
       ahead._ry += ty * deficit * 0.16;
@@ -3462,17 +3716,33 @@ function applyOvertakeLaneOffsets(cars, dt) {
         const dx = b._rx - a._rx;
         const dy = b._ry - a._ry;
         const dist = Math.hypot(dx, dy);
-        if (dist >= minSep) continue;
+        const pairCornerFactor = Math.max(a._laneCornerFactor || 0, b._laneCornerFactor || 0);
+        if (pairCornerFactor > 0.36) continue;
+        const pairMinSep = minSep * (1 - 0.48 * pairCornerFactor);
+        if (dist >= pairMinSep) continue;
         a._localDensity++;
         b._localDensity++;
 
-        const overlap = (minSep - Math.max(dist, eps)) * 0.5;
+        const overlap = (pairMinSep - Math.max(dist, eps)) * 0.5;
         const ux = dist > eps ? dx / dist : (((i + j) % 2 ? 1 : -1) * 0.7071);
         const uy = dist > eps ? dy / dist : (((i + j) % 2 ? -1 : 1) * 0.7071);
-        a._rx -= ux * overlap;
-        a._ry -= uy * overlap;
-        b._rx += ux * overlap;
-        b._ry += uy * overlap;
+        const tx = ((a._laneTangentX || 0) + (b._laneTangentX || 0)) * 0.5;
+        const ty = ((a._laneTangentY || 0) + (b._laneTangentY || 0)) * 0.5;
+        const tLen = Math.hypot(tx, ty) || 1;
+        const tux = tx / tLen;
+        const tuy = ty / tLen;
+        const nvx = -tuy;
+        const nvy = tux;
+        const longComp = ux * tux + uy * tuy;
+        const latComp = ux * nvx + uy * nvy;
+        const latScale = 0.34 * Math.max(0.05, 1 - pairCornerFactor * 1.08);
+        const longScale = 0.92 + 0.24 * pairCornerFactor;
+        const pushX = (tux * longComp * longScale) + (nvx * latComp * latScale);
+        const pushY = (tuy * longComp * longScale) + (nvy * latComp * latScale);
+        a._rx -= pushX * overlap;
+        a._ry -= pushY * overlap;
+        b._rx += pushX * overlap;
+        b._ry += pushY * overlap;
       }
     }
   }
@@ -3480,29 +3750,33 @@ function applyOvertakeLaneOffsets(cars, dt) {
   // Constrain offset so cars still follow the track naturally.
   const blend = Math.min(1, dt * 7.2);
   cars.forEach((car) => {
-    const ang = car.angle || 0;
-    const tx = Math.cos(ang), ty = Math.sin(ang);
-    const nx = -Math.sin(ang), ny = Math.cos(ang);
+    const tx = car._laneTangentX ?? Math.cos(car.angle || 0);
+    const ty = car._laneTangentY ?? Math.sin(car.angle || 0);
+    const nx = car._laneNormalX ?? -Math.sin(car.angle || 0);
+    const ny = car._laneNormalY ?? Math.cos(car.angle || 0);
     const dx = car._rx - car.canvasX;
     const dy = car._ry - car.canvasY;
+    const cornerFactor = car._laneCornerFactor || 0;
+    const densityTighten = Math.max(0.56, 1 - car._localDensity * 0.035);
+    const laneSoft = laneMax * (0.08 + 0.92 * Math.pow(1 - cornerFactor, 2.2)) * densityTighten;
+    const longSoft = longMax * (0.18 + 0.82 * Math.pow(1 - cornerFactor, 1.5));
 
-    const lateral = Math.max(-laneMax, Math.min(laneMax, dx * nx + dy * ny));
-    const longitudinal = Math.max(-longMax, Math.min(longMax, dx * tx + dy * ty));
+    const lateral = Math.max(-laneSoft, Math.min(laneSoft, dx * nx + dy * ny));
+    const longitudinal = Math.max(-longSoft, Math.min(longSoft, dx * tx + dy * ty));
 
     let targetX = car.canvasX + nx * lateral + tx * longitudinal;
     let targetY = car.canvasY + ny * lateral + ty * longitudinal;
 
     // Hard safety clamp: keep visual offsets within track corridor, tighter in corners.
-    const idx = findNearestTrackIndex(car.canvasX, car.canvasY, car._trackIdxHint);
+    const idx = car._trackIdxHint ?? findNearestTrackIndex(car.canvasX, car.canvasY, car._trackIdxHint);
     car._trackIdxHint = idx;
-    const N = trackPath.length;
     const base = trackPath[idx] || [car.canvasX, car.canvasY];
     const prev = trackPath[(idx - 2 + N) % N] || base;
     const next = trackPath[(idx + 2) % N] || base;
     const t0 = Math.atan2(base[1] - prev[1], base[0] - prev[0]);
     const t1 = Math.atan2(next[1] - base[1], next[0] - base[0]);
     const bend = Math.abs(normalizeAngle(t1 - t0));
-    const cornerFactor = Math.min(1, bend / 0.85);
+    const clampCornerFactor = Math.min(1, bend / 0.85);
 
     const tdx = next[0] - prev[0];
     const tdy = next[1] - prev[1];
@@ -3512,10 +3786,10 @@ function applyOvertakeLaneOffsets(cars, dt) {
     const vx = -uy;
     const vy = ux;
 
-    const laneHard = (12 + 2.0 * (1 - cornerFactor)) * TRACK_WIDTH_MULT;
+    const laneHard = (12 + 2.0 * (1 - clampCornerFactor)) * TRACK_WIDTH_MULT;
     const straightLongHard = 78 * CAR_VISUAL_SCALE;
     const cornerLongHard = 30 * CAR_VISUAL_SCALE;
-    const longHard = straightLongHard - (straightLongHard - cornerLongHard) * Math.min(1, cornerFactor * 1.08);
+    const longHard = straightLongHard - (straightLongHard - cornerLongHard) * Math.min(1, clampCornerFactor * 1.08);
 
     const rx = targetX - base[0];
     const ry = targetY - base[1];
@@ -3552,8 +3826,15 @@ function applyOvertakeLaneOffsets(cars, dt) {
       car.renderX = targetX;
       car.renderY = targetY;
     }
-    car.renderX += (targetX - car.renderX) * blend;
-    car.renderY += (targetY - car.renderY) * blend;
+    const currentDx = car.renderX - snapBase[0];
+    const currentDy = car.renderY - snapBase[1];
+    const currentLat = Math.abs(currentDx * svx + currentDy * svy);
+    const currentLong = Math.abs(currentDx * sux + currentDy * suy);
+    const hardOutside = currentLat > snapLaneHard + 4 || currentLong > snapLongHard + 14;
+    const cornerBlend = Math.max(blend * 0.8, 0.12 + snapCornerFactor * 0.18);
+    const settleBlend = hardOutside ? 0.6 : cornerBlend;
+    car.renderX += (targetX - car.renderX) * settleBlend;
+    car.renderY += (targetY - car.renderY) * settleBlend;
   });
 }
 
@@ -3564,6 +3845,41 @@ function getDisplayedCarPose(car) {
     y: car._pitRender?.y ?? car.renderY,
     angle: car._pitRender?.angle ?? car.angle ?? 0,
   };
+}
+
+function getStableLaneSlot(car) {
+  if (Number.isFinite(car?._laneSlot)) return car._laneSlot;
+  const code = normalizeDriverCode(car?.code) || '';
+  let hash = 0;
+  for (let i = 0; i < code.length; i++) hash += code.charCodeAt(i);
+  const slot = ((hash % 3) - 1);
+  if (car) car._laneSlot = slot;
+  return slot;
+}
+
+function getTrackHeadingAtIndex(idx) {
+  const N = Array.isArray(trackPath) ? trackPath.length : 0;
+  if (!N || !Number.isFinite(idx)) return 0;
+  const baseIdx = ((Math.round(idx) % N) + N) % N;
+  const prev = trackPath[(baseIdx - 2 + N) % N] || trackPath[baseIdx];
+  const next = trackPath[(baseIdx + 2) % N] || trackPath[baseIdx];
+  return Math.atan2(next[1] - prev[1], next[0] - prev[0]);
+}
+
+function layoutDriverLabels(ctx, cars, dt) {
+  if (!Array.isArray(cars) || !cars.length) return;
+  cars.forEach((car) => {
+    const poseAngle = car._pitRender?.angle ?? car.angle ?? 0;
+    const targetAngle = car._pitRender?.sample
+      ? poseAngle
+      : (Number.isFinite(car._trackIdxHint) && car._trackIdxHint >= 0 ? getTrackHeadingAtIndex(car._trackIdxHint) : poseAngle);
+    car._labelAngle = Number.isFinite(car._labelAngle)
+      ? smoothAngle(car._labelAngle, targetAngle, Math.min(1, dt * 5.5))
+      : targetAngle;
+    car._labelDensity = 0;
+    car._labelX = null;
+    car._labelY = null;
+  });
 }
 
 function drawTrackBattleEffects(ctx, cars) {
@@ -3677,6 +3993,10 @@ function startRenderLoop(canvas) {
   const W   = canvas.width;
   const H   = canvas.height;
   const N   = trackPath.length;
+  const perfMode = !!runtimePerfProfile?.enabled;
+  const minRenderFrameMs = Math.max(0, Number(runtimePerfProfile?.minRenderFrameMs) || 0);
+  const trailsEnabled = runtimePerfProfile?.trails !== false;
+  const battleFxEnabled = runtimePerfProfile?.battleFx !== false;
 
   // ── Curvature for synthetic mode ─────────────────────────────────
   const curvature = trackPath.map((pt, i) => {
@@ -3703,6 +4023,7 @@ function startRenderLoop(canvas) {
   // frameIdx = Math.floor(replayTime) since frames are 1s apart.
   // This avoids ALL binary search bugs.
   const maxFrameIdx = replayFrames.length - 1;
+  let lastPaintTimestamp = 0;
 
   let lastGapUpdate = 0;
 
@@ -3724,9 +4045,19 @@ function startRenderLoop(canvas) {
       // Synthetic: progress advanced per-car below
     }
 
+    if (minRenderFrameMs > 0 && lastPaintTimestamp && (ts - lastPaintTimestamp) < minRenderFrameMs) {
+      trackAnimFrame = requestAnimationFrame(frame);
+      return;
+    }
+    lastPaintTimestamp = ts;
+
     // ── Fade trails ───────────────────────────────────────────────
-    trailCtx.fillStyle = 'rgba(0,0,0,0.06)';
-    trailCtx.fillRect(0, 0, W, H);
+    if (trailsEnabled) {
+      trailCtx.fillStyle = 'rgba(0,0,0,0.08)';
+      trailCtx.fillRect(0, 0, W, H);
+    } else {
+      trailCtx.clearRect(0, 0, W, H);
+    }
 
     const replayLapValue = getReplayLapValue();
     const replayClockSeconds = getPlaybackClockSeconds(replayLapValue);
@@ -3740,6 +4071,9 @@ function startRenderLoop(canvas) {
       if (car._retired) {
         car._pitState = null;
         car._pitRender = null;
+        car._labelX = null;
+        car._labelY = null;
+        car._labelDensity = 0;
         return;
       }
 
@@ -3747,10 +4081,8 @@ function startRenderLoop(canvas) {
         // Direct frame index lookup — no binary search
         const fi = Math.min(Math.floor(replayTime), maxFrameIdx);
         const fi2 = Math.min(fi + 1, maxFrameIdx);
-        const f0 = replayFrames[fi];
-        const f1 = replayFrames[fi2];
-        const c0 = f0?.cars?.[car.code];
-        const c1 = f1?.cars?.[car.code];
+        const c0 = getReplayDerivedSample(car.code, fi);
+        const c1 = getReplayDerivedSample(car.code, fi2);
 
         if (c0) {
           let nx, ny;
@@ -3762,17 +4094,17 @@ function startRenderLoop(canvas) {
           } else {
             nx = c0.x; ny = c0.y;
           }
-          const [px, py] = realPosToCanvas(nx, ny, W, H);
           if (!Number.isFinite(car.canvasX) || !Number.isFinite(car.canvasY)) {
-            car.canvasX = px;
-            car.canvasY = py;
+            car.canvasX = nx;
+            car.canvasY = ny;
           }
-          const dx = px - car.canvasX;
-          const dy = py - car.canvasY;
+          const dx = nx - car.canvasX;
+          const dy = ny - car.canvasY;
           const dist = Math.hypot(dx, dy);
           const posBlend = Math.min(1, dt * 14);
           car.canvasX += dx * posBlend;
           car.canvasY += dy * posBlend;
+          car._trackIdxHint = Number.isFinite(c0.pathIdx) && c0.pathIdx >= 0 ? c0.pathIdx : car._trackIdxHint;
           if (dist > 0.18) {
             const targetAngle = Math.atan2(dy, dx);
             car.angle = smoothAngle(car.angle, targetAngle, Math.min(1, dt * 10));
@@ -3802,8 +4134,18 @@ function startRenderLoop(canvas) {
       }
     });
 
-    // Give cars lateral room during close racing so overtakes are visible.
-    applyOvertakeLaneOffsets(activeTrackCars, dt);
+    // Real telemetry should stay smooth and faithful to the source path.
+    // The visual spacing layer is useful for synthetic playback, but on dense
+    // real-data packs it introduces visible jitter as cars constantly repel.
+    if (usingRealData) {
+      activeTrackCars.forEach(car => {
+        car.renderX = car.canvasX;
+        car.renderY = car.canvasY;
+      });
+    } else {
+      // Give cars lateral room during close racing so overtakes are visible.
+      applyOvertakeLaneOffsets(activeTrackCars, dt);
+    }
 
     const pitStates = getPitStatesForLap(replayLapValue);
     const pitStateByCode = new Map(pitStates.map(state => [state.code, state]));
@@ -3811,6 +4153,9 @@ function startRenderLoop(canvas) {
       if (car._retired) {
         car._pitState = null;
         car._pitRender = null;
+        car._labelX = null;
+        car._labelY = null;
+        car._labelDensity = 0;
         return;
       }
       const state = pitStateByCode.get(car.code);
@@ -3818,23 +4163,29 @@ function startRenderLoop(canvas) {
       car._pitRender = state?.sample || null;
     });
 
+    layoutDriverLabels(ctx, activeTrackCars, dt);
+
     // Trail dots
-    activeTrackCars.forEach(car => {
-      const px = car._pitRender?.x ?? car.renderX;
-      const py = car._pitRender?.y ?? car.renderY;
-      trailCtx.save();
-      trailCtx.globalAlpha = 0.45;
-      trailCtx.fillStyle = car.color;
-      trailCtx.beginPath();
-      trailCtx.arc(px, py, 2.5, 0, Math.PI*2);
-      trailCtx.fill();
-      trailCtx.restore();
-    });
+    if (trailsEnabled) {
+      activeTrackCars.forEach(car => {
+        const px = car._pitRender?.x ?? car.renderX;
+        const py = car._pitRender?.y ?? car.renderY;
+        trailCtx.save();
+        trailCtx.globalAlpha = 0.42;
+        trailCtx.fillStyle = car.color;
+        trailCtx.beginPath();
+        trailCtx.arc(px, py, 2.2, 0, Math.PI*2);
+        trailCtx.fill();
+        trailCtx.restore();
+      });
+    }
 
     // ── Composite ─────────────────────────────────────────────────
     ctx.clearRect(0, 0, W, H);
     ctx.drawImage(preRendered, 0, 0);
-    ctx.save(); ctx.globalAlpha = 0.55; ctx.drawImage(trailCanvas, 0, 0); ctx.restore();
+    if (trailsEnabled) {
+      ctx.save(); ctx.globalAlpha = 0.55; ctx.drawImage(trailCanvas, 0, 0); ctx.restore();
+    }
 
     // Draw cars back→front
     [...activeTrackCars].sort((a,b) => b.pos - a.pos).forEach(car => {
@@ -3846,7 +4197,9 @@ function startRenderLoop(canvas) {
       }
     });
 
-    drawTrackBattleEffects(ctx, activeTrackCars);
+    if (battleFxEnabled) {
+      drawTrackBattleEffects(ctx, activeTrackCars);
+    }
 
     trackAnimFrame = requestAnimationFrame(frame);
   }
@@ -4057,15 +4410,16 @@ function computeMedianNumber(values) {
 function getCarTrackProgress(code, opts = {}) {
   if (!replayFrames.length || !trackPath.length) return null;
   const fi = Math.min(Math.floor(replayTime), replayFrames.length - 1);
-  const pos = replayFrames[fi]?.cars?.[code];
-  if (!pos) return null;
-  const canvas = document.getElementById('trackCanvas');
-  const W = canvas?.width || 800, H = canvas?.height || 600;
-  const [px, py] = realPosToCanvas(pos.x, pos.y, W, H);
+  const derived = getReplayDerivedSample(code, fi);
+  if (derived && Number.isFinite(derived.pathIdx) && derived.pathIdx >= 0) {
+    const N = trackPath.length;
+    return { progress: derived.pathIdx / N, pathIdx: derived.pathIdx };
+  }
+  if (!derived) return null;
   const state = liveTrackProgressState.get(normalizeDriverCode(code));
   const bestIdx = findNearestTrackIndexForStandings(
-    px,
-    py,
+    derived.x,
+    derived.y,
     state?.pathIdx ?? null,
     opts.hintWindow,
     opts.allowGlobalFallback !== false
@@ -4344,6 +4698,7 @@ function startPlay() {
     // Canvas render loop already advances replayTime each frame.
     // Just poll to sync the UI (lap counter, timing tower, events).
     clearInterval(playTimer);
+    const tickMs = Math.max(50, Number(runtimePerfProfile?.uiUpdateMs) || 50);
     playTimer = setInterval(() => {
       if (!isPlaying) return;
       const maxT = replayFrames[replayFrames.length - 1]?.t || 1;
@@ -4354,10 +4709,10 @@ function startPlay() {
         pausePlay();
         setStatus('✓ Recap complete!');
       }
-    }, 50); // 20x/sec keeps timeline motion smooth
+    }, tickMs);
   } else {
     // Synthetic mode: advance in small lap fractions for smooth timeline motion
-    const tickMs = 50;
+    const tickMs = Math.max(50, Number(runtimePerfProfile?.uiUpdateMs) || 50);
     const lapPerSecond = (totalLaps / TARGET_DURATION) * BASE_PLAYBACK_MULT;
     clearInterval(playTimer);
     playTimer = setInterval(() => {

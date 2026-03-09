@@ -196,10 +196,17 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
         drv_num  = str(row.get("DriverNumber", ""))
         team     = str(row.get("TeamName", "Unknown"))
         pos      = row.get("Position", None)
+        grid_pos = row.get("GridPosition", None)
         try:
             pos = int(pos)
         except Exception:
             pos = 99
+        try:
+            grid_pos = int(grid_pos)
+            if grid_pos <= 0:
+                grid_pos = None
+        except Exception:
+            grid_pos = None
 
         # Best lap
         try:
@@ -233,6 +240,8 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
 
         drivers_out.append({
             "pos":      pos,
+            "gridPos":  grid_pos,
+            "startPos": grid_pos,
             "code":     drv_code,
             "num":      drv_num,
             "name":     f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),

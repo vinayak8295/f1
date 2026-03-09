@@ -355,7 +355,7 @@
   /* ── TIMING TOWER (Broadcast left side) ── */
   .tv-timing-tower {
     position: absolute;
-    top: 620px !important;
+    top: 650px !important;
     left: 14px;
     z-index: 22;
     width: 250px;
