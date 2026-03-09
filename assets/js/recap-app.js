@@ -1603,10 +1603,10 @@ const CIRCUIT_UI_CONFIGS = {
   melbourne: {
     trackFit: {
       autoSafeZones: false,
-      safeZonesCss: { top: 10, right: 320, bottom: 10, left: 100 },
+      safeZonesCss: { top: 10, right: 340, bottom: 10, left: 100 },
       scaleMult: 1.15,
       offsetXPct: 0.055,
-      offsetYPct: 0.035,
+      offsetYPct: 0.001,
     },
     labels: {
       scale: 1.04,
@@ -2331,24 +2331,17 @@ function updatePitBoxOverlay(lapValue) {
       : 'RECENT STOPS';
   }
   listEl.innerHTML = states.map((state) => {
-    const compoundClass = /^[SMHIW]$/.test(state.compound) ? ` compound-${state.compound}` : '';
     const durationValue = state.phase === 'service'
       ? (Number.isFinite(state.liveStopSec) ? state.liveStopSec : state.durationSec)
       : state.durationSec;
     const durationLabel = Number.isFinite(durationValue)
-      ? (state.phase === 'service' ? `${durationValue.toFixed(1)}S LIVE` : `${durationValue.toFixed(1)}S`)
+      ? `${durationValue.toFixed(1)}S`
       : (state.phase === 'service' ? 'LIVE' : 'TIME N/A');
+    const rowClass = state.phase === 'service' ? ' is-live' : '';
     return `
-      <div class="tv-pit-row">
+      <div class="tv-pit-row${rowClass}">
         <div class="tv-pit-driver">${state.code}</div>
-        <div class="tv-pit-meta">
-          <span class="tv-pit-phase">${state.phaseLabel}</span>
-          <span class="tv-pit-subline">
-            <span class="tv-pit-lap">LAP ${state.lap}</span>
-            <span class="tv-pit-note">${state.timeLabel || 'PIT WINDOW'}</span>
-            <span class="tv-pit-compound${compoundClass}">${state.compound || '—'}</span>
-          </span>
-        </div>
+        <div class="tv-pit-phase">${state.phase === 'service' ? 'IN PIT' : 'STOP'}</div>
         <div class="tv-pit-duration">${durationLabel}</div>
       </div>`;
   }).join('');

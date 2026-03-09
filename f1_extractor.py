@@ -254,6 +254,52 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
 
     drivers_out.sort(key=lambda d: d["pos"])
 
+    def extract_driver_pit_windows(drv_laps):
+        windows = []
+        pending = None
+        try:
+            ordered_laps = drv_laps.sort_values("LapNumber")
+        except Exception:
+            return windows
+
+        for _, lap in ordered_laps.iterrows():
+            lap_no = int(lap.get("LapNumber", 0) or 0)
+            if lap_no <= 0:
+                continue
+
+            pit_in_abs = td_seconds(lap.get("PitInTime"))
+            pit_out_abs = td_seconds(lap.get("PitOutTime"))
+            compound = compound_code(lap.get("Compound", "—"))
+
+            if pit_in_abs is not None:
+                if pending is not None:
+                    windows.append(pending)
+                pending = {
+                    "lap": lap_no,
+                    "entryTimeAbs": pit_in_abs,
+                    "exitTimeAbs": None,
+                    "duration": None,
+                    "compound": compound,
+                }
+
+            if (
+                pit_out_abs is not None
+                and pending is not None
+                and pending["exitTimeAbs"] is None
+                and pit_out_abs >= pending["entryTimeAbs"]
+            ):
+                pending["exitTimeAbs"] = pit_out_abs
+                pending["duration"] = round(max(0.0, pit_out_abs - pending["entryTimeAbs"]), 3)
+                if compound and compound != "—":
+                    pending["compound"] = compound
+                windows.append(pending)
+                pending = None
+
+        if pending is not None:
+            windows.append(pending)
+
+        return windows
+
     # ── Pit stop history ──────────────────────────────────────────────────────
     print("🔧  Processing pit stops...")
     pit_history = []
@@ -264,20 +310,14 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
             drv_laps = session.laps.pick_drivers(str(drv_num))
             if drv_laps.empty:
                 continue
-            pit_laps = drv_laps[drv_laps["PitInTime"].notna()]
-            for _, pl in pit_laps.iterrows():
+            for pit_window in extract_driver_pit_windows(drv_laps):
                 try:
-                    pit_in_sec = td_seconds(pl.get("PitInTime"))
-                    pit_out_sec = td_seconds(pl.get("PitOutTime"))
-                    duration = None
-                    if pit_in_sec is not None and pit_out_sec is not None:
-                        duration = round(max(0.0, pit_out_sec - pit_in_sec), 1)
                     pit_history.append({
-                        "lap":      int(pl["LapNumber"]),
+                        "lap":      pit_window["lap"],
                         "driver":   drv_code,
                         "team":     team,
-                        "duration": duration,
-                        "compound": compound_code(pl.get("Compound", "—")),
+                        "duration": round(pit_window["duration"], 1) if pit_window["duration"] is not None else None,
+                        "compound": pit_window["compound"],
                     })
                 except Exception:
                     pass
@@ -320,6 +360,8 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
             drv_laps = session.laps.pick_drivers(str(drv_num))
             if drv_laps.empty:
                 continue
+            pit_windows = extract_driver_pit_windows(drv_laps)
+            pit_window_by_lap = {window["lap"]: window for window in pit_windows}
 
             for _, lap in drv_laps.sort_values("LapNumber").iterrows():
                 lap_no = int(lap.get("LapNumber", 0) or 0)
@@ -357,17 +399,16 @@ def extract_race(year: int, round_num: int, session_type: str = "R") -> dict:
                 }
                 lap_records.append(lap_record)
 
-                pit_in_abs = td_seconds(lap.get("PitInTime"))
-                pit_out_abs = td_seconds(lap.get("PitOutTime"))
-                if pit_in_abs is not None or pit_out_abs is not None:
+                pit_window = pit_window_by_lap.get(lap_no)
+                if pit_window is not None:
                     pit_stops.append({
                         "driver": drv_code,
                         "team": drv_info["team"],
                         "lap": lap_no,
-                        "compound": compound_code(lap.get("Compound", "—")),
-                        "entryTime": round(max(0.0, pit_in_abs - session_time_zero), 3) if pit_in_abs is not None else None,
-                        "exitTime": round(max(0.0, pit_out_abs - session_time_zero), 3) if pit_out_abs is not None else None,
-                        "duration": round(max(0.0, pit_out_abs - pit_in_abs), 3) if pit_in_abs is not None and pit_out_abs is not None else None,
+                        "compound": pit_window["compound"],
+                        "entryTime": round(max(0.0, pit_window["entryTimeAbs"] - session_time_zero), 3) if pit_window["entryTimeAbs"] is not None else None,
+                        "exitTime": round(max(0.0, pit_window["exitTimeAbs"] - session_time_zero), 3) if pit_window["exitTimeAbs"] is not None else None,
+                        "duration": pit_window["duration"],
                     })
     except Exception as e:
         print(f"⚠   Lap timing extraction partial: {e}")
